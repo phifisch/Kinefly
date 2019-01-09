@@ -9,7 +9,9 @@ from Kinefly.srv import SrvTrackerdata, SrvTrackerdataResponse
 from Kinefly.msg import MsgFlystate, MsgState
 import ui
 
-
+import matplotlib.pyplot as plt
+from numpy import set_printoptions, nan, save
+set_printoptions(threshold=nan)
 
 ###############################################################################
 ###############################################################################
@@ -20,29 +22,71 @@ class EdgeDetectorByIntensityProfile(object):
         self.intensities = []
         self.diff = []
         self.set_params(threshold, n_edges_max, sense)
-
+        """
+        self.f=plt.figure()
+        self.ax=self.f.add_axes()
+        self.f.show()
+        plt.ion()"""
+        self.i=1
 
     def set_params(self, threshold, n_edges_max, sense):
         self.threshold = threshold
         self.n_edges_max = n_edges_max
         self.sense = sense
 
+    def detectFront(self, image):
+        axis=0
+        intensitiesRaw = np.sum(image, axis).astype(np.float32)
+        intensitiesRaw /= (255.0*image.shape[axis]) # Put into range [0,1]
+        self.intensities = intensitiesRaw#filter_median(intensitiesRaw, q=1)
+        # Compute the intensity gradient.
+        n = 3
+        a = np.append(self.intensities[n:], self.intensities[-1]*np.ones(n))
+        b = np.append(self.intensities[0]*np.ones(n), self.intensities[:-n])
+        self.diff = b-a
+
+        #threshold=0.01
+        inds = np.where(self.diff>self.threshold)
+        if inds[0].size >0:
+            firstInd = inds[0][-self.sense:] #last from behind is front most in image
+        else:
+            firstInd = inds[0]
+        #edges_list = [firstInd]
+        #firstInd=[10]
+        return (firstInd, self.diff[firstInd])
+
 
     # detect()
     # Get the horizontal pixel position of all the vertical edge pairs that exceed a magnitude threshold.
     #
     def detect(self, image):
+        #print('DEADBEEF')
+        """if self.i==200:
+            print(image.shape)
+            print(image)
+            save('/home/schnell_la/Desktop/example_image2.npy', image)
+        if self.i%1000==200:
+            #pass
+            plt.figure()
+            imax=plt.imshow(image)
+            save('/home/schnell_la/Desktop/example_image3.npy', imax.get_array().filled(0.5))
+            plt.show()
+            #self.ax.imshow(image)
+            #plt.ion()
+            #plt.draw()
+        self.i+=1"""
+        #plt.imshow(self.ax, image)
         axis = 0
         intensitiesRaw = np.sum(image, axis).astype(np.float32)
         intensitiesRaw /= (255.0*image.shape[axis]) # Put into range [0,1]
         self.intensities = intensitiesRaw#filter_median(intensitiesRaw, q=1)
-        
-        # Compute the intensity gradient. 
-        n = 2
+
+        # Compute the intensity gradient.
+        n = 3
         a = np.append(self.intensities[n:], self.intensities[-1]*np.ones(n))
         b = np.append(self.intensities[0]*np.ones(n), self.intensities[:-n])
         self.diff = b-a
-        
+
         # Make copies for positive-going and negative-going edges.
         diffP = copy.copy( self.sense*self.diff)
         diffN = copy.copy(-self.sense*self.diff)
@@ -50,7 +94,7 @@ class EdgeDetectorByIntensityProfile(object):
         # Threshold the positive and negative diffs.
         iZero = np.where(diffP < self.threshold)[0] # 4*np.std(diffP))[0] #
         diffP[iZero] = 0.0
-        
+
         iZero = np.where(diffN < self.threshold)[0] # 4*np.std(diffN))[0] #
         diffN[iZero] = 0.0
 
@@ -62,10 +106,10 @@ class EdgeDetectorByIntensityProfile(object):
         nCount = self.n_edges_max + (self.n_edges_max % 2) # Round up to the next multiple of 2 so that we look at both P and N diffs.
         q = 0 # Alternate between P & N:  0=P, 1=N
         diff_list = [diffP, diffN]
-        edges_list = [edgesP, edgesN] 
-        abs_list = [absP, absN] 
+        edges_list = [edgesP, edgesN]
+        abs_list = [absP, absN]
         iCount = 0
-        
+
         # While there are edges to detect, put them in lists in order of decending strength.
         while ((0.0 < np.max(diffP)) or (0.0 < np.max(diffN))) and (iCount < nCount):
 
@@ -76,7 +120,7 @@ class EdgeDetectorByIntensityProfile(object):
                 edges_list[q].append(iMax)
                 abs_list[q].append(diff_list[q][iMax])
                 iCount += 1
-                
+
                 # Zero all the values associated with this edge.
                 for i in range(iMax-1, -1, -1):
                     if (0.0 < diff_list[q][i]):
@@ -93,6 +137,7 @@ class EdgeDetectorByIntensityProfile(object):
 
 
         #(edgesMajor, edgesMinor) = self.SortEdgesPairwise(edgesP, absP, edgesN, absN)
+        print(len(edgesP)+len(edgesN))
         (edgesMajor, edgesMinor) = self.SortEdgesOneEdge(edgesP, absP, edgesN, absN)
 
         # Combine & sort the two lists by decreasing absolute gradient.
@@ -107,11 +152,10 @@ class EdgeDetectorByIntensityProfile(object):
         else:
             edges_sorted = []
             gradients_sorted = []
-    
         return (edges_sorted, gradients_sorted)
-        
-           
-    
+
+
+
     # SortEdgesOneEdge()
     # Make sure that if there's just one edge, that it's in the major list.
     #
@@ -135,7 +179,7 @@ class EdgeDetectorByIntensityProfile(object):
                 absN.pop()
 
 
-        # Sort the edges.            
+        # Sort the edges.
         if (len(edgesP)==0) and (len(edgesN)>0):
             edgesMajor = edgesN
             edgesMinor = edgesP
@@ -146,32 +190,32 @@ class EdgeDetectorByIntensityProfile(object):
         #    edgesMajor = edgesP
         #    edgesMinor = edgesN
 
-            
+
         return (edgesMajor, edgesMinor)
-            
-        
+
+
     # SortEdgesPairwise()
-    # For each pair of (p,n) edges, the stronger edge of the pair is the major one.  
+    # For each pair of (p,n) edges, the stronger edge of the pair is the major one.
     #
     def SortEdgesPairwise(self, edgesP, absP, edgesN, absN):
         edgesMajor = []
         edgesMinor = []
         edges_list = [edgesMajor, edgesMinor]
         abs_list = [absP, absN]
-        iCount = 0 
+        iCount = 0
 
         m = max(len(edgesP), len(edgesN))
         for i in range(m):
             (absP1,edgeP1) = (absP[i],edgesP[i]) if (i<len(edgesP)) else (0.0, 0)
             (absN1,edgeN1) = (absN[i],edgesN[i]) if (i<len(edgesN)) else (0.0, 0)
-            
+
             if (absP1 < absN1) and (iCount < self.n_edges_max):
                 edgesMajor.append(edgeN1)
                 iCount += 1
                 if (0.0 < absP1) and (iCount < self.n_edges_max):
                     edgesMinor.append(edgeP1)
                     iCount += 1
-                    
+
             elif (iCount < self.n_edges_max):
                 edgesMajor.append(edgeP1)
                 iCount += 1
@@ -185,28 +229,28 @@ class EdgeDetectorByIntensityProfile(object):
     def SortEdgesMax(self, edgesP, absP, edgesN, absN):
         # The P or N list with the 'stronger' edge is considered to be the "major" one.
         if (np.max(absN) < np.max(absP)):
-            edgesMajor = edgesP 
+            edgesMajor = edgesP
             edgesMinor = edgesN
-        else:  
-            edgesMajor = edgesN 
-            edgesMinor = edgesP 
-            
+        else:
+            edgesMajor = edgesN
+            edgesMinor = edgesP
+
         return (edgesMajor, edgesMinor)
-    
+
 # End class EdgeDetectorByIntensityProfile
-    
-    
+
+
 ###############################################################################
 ###############################################################################
 # EdgeTrackerByIntensityProfile()
-# Track radial bodypart edges using the gradient of the image intensity.  
+# Track radial bodypart edges using the gradient of the image intensity.
 # i.e. Compute how the intensity changes with angle, and detect the locations
 # of the greatest change.  Usually used for Wings.
 #
 class EdgeTrackerByIntensityProfile(MotionTrackedBodypartPolar):
     def __init__(self, name=None, params={}, color='white', bEqualizeHist=False):
         MotionTrackedBodypartPolar.__init__(self, name, params, color, bEqualizeHist)
-        
+
         self.name       = name
         self.detector   = EdgeDetectorByIntensityProfile()
         self.state      = MsgState()
@@ -215,14 +259,14 @@ class EdgeTrackerByIntensityProfile(MotionTrackedBodypartPolar):
 
         # Services, for live intensities plots via live_wing_histograms.py
         self.service_trackerdata    = rospy.Service('trackerdata_'+name, SrvTrackerdata, self.serve_trackerdata_callback)
-    
-    
+
+
     # set_params()
     # Set the given params dict into this object.
     #
     def set_params(self, params):
         MotionTrackedBodypartPolar.set_params(self, params)
-        
+
         self.imgRoiBackground = None
         self.iCount = 0
 
@@ -238,21 +282,25 @@ class EdgeTrackerByIntensityProfile(MotionTrackedBodypartPolar):
             a = -1 if (self.name=='right') else 1
             self.sense = a*self.senseAxes
         else:
-            self.sense = 1  
+            self.sense = 1
 
         self.detector.set_params(params[self.name]['threshold'], params['n_edges_max'], self.sense)
-    
-        
+
+
     # update_state()
     #
     def update_state(self):
         imgNow = self.imgRoiFgMaskedPolarCropped
         self.windowEdges.set_image(imgNow)
-        
+
         # Get the rotation & expansion between images.
         if (imgNow is not None):
             # Pixel position and strength of the edges.
-            (edges, gradients) = self.detector.detect(imgNow)
+            """EDIT THIS IF NOT HAPPY"""
+            #(edges, gradients) = self.detector.detect(imgNow)
+            ###ADDED PRIMITIVE FRONT EDGE DETECTION, ORIGINAL ABOVE
+            (edges, gradients) = self.detector.detectFront(imgNow)
+            #####
 
             anglePerPixel = (self.params['gui'][self.name]['angle_hi']-self.params['gui'][self.name]['angle_lo']) / float(imgNow.shape[1])
 
@@ -266,11 +314,16 @@ class EdgeTrackerByIntensityProfile(MotionTrackedBodypartPolar):
                 angle_p = (self.transform_angle_p_from_b(angle_b) + np.pi) % (2*np.pi) - np.pi
                 self.state.angles.append(angle_p)
                 self.state.gradients.append(gradient)
-                
-
+            ###ADDITION BY ME
+            self.state.angles = np.array(self.state.angles)
+            self.state.gradients = np.array(self.state.gradients)
+            s = np.argsort(self.state.angles)
+            self.state.angles = list( self.state.angles[s[::-1]] )
+            self.state.gradients = list( self.state.gradients[s[::-1]] )
+            ###END ADDITION
             self.state.intensity = np.mean(imgNow)/255.0
 
-        
+
     # update()
     # Update all the internals given a foreground camera image.
     #
@@ -279,14 +332,14 @@ class EdgeTrackerByIntensityProfile(MotionTrackedBodypartPolar):
 
         if (self.params['gui'][self.name]['track']):
             self.update_state()
-            
+
 
     # draw()
     # Draw the outline.
     #
     def draw(self, image):
         MotionTrackedBodypartPolar.draw(self, image)
-        
+
         if (self.params['gui'][self.name]['track']):
             # Draw the major and minor edges alternately, until the max number has been reached.
             bgra = self.bgra
@@ -300,16 +353,16 @@ class EdgeTrackerByIntensityProfile(MotionTrackedBodypartPolar):
                 y1 = self.ptHinge_i[1] + self.params['gui'][self.name]['radius_outer'] * np.sin(angle_i)
                 cv2.line(image, (int(x0),int(y0)), (int(x1),int(y1)), bgra, 1)
                 bgra = tuple(0.5*np.array(bgra))
-                
+
             self.windowEdges.show()
-        
-        
+
+
     def serve_trackerdata_callback(self, request):
         title1      = 'Intensities'
         title2      = 'Diffs'
         abscissa = np.linspace(self.params['gui'][self.name]['angle_lo'], self.params['gui'][self.name]['angle_hi'], len(self.detector.intensities))
-        
-            
+
+
         angles = []
         gradients = []
         for i in range(len(self.state.angles)):
@@ -320,11 +373,11 @@ class EdgeTrackerByIntensityProfile(MotionTrackedBodypartPolar):
             gradients.append(gradient)
 
         return SrvTrackerdataResponse(self.color, title1, title2, abscissa, self.detector.intensities, self.detector.diff, angles, gradients)
-        
-        
+
+
 # end class EdgeTrackerByIntensityProfile
 
-    
+
 ###############################################################################
 ###############################################################################
 # Find the N largest edges in the image, that go through the hinge point.
@@ -344,19 +397,19 @@ class EdgeDetectorByHoughTransform(object):
         self.angleBodypart_b = angleBodypart_b
         self.intensities = []
         self.mask = mask
-        
+
         # Reset the angles from the hinge to each pixel.
         self.imgAngles = None
-            
-            
+
+
     def CalcAngles(self, shape):
         if (shape is not None):
-            cTheta = np.cos(-self.angleBodypart_i)       
-            sTheta = np.sin(-self.angleBodypart_i)       
+            cTheta = np.cos(-self.angleBodypart_i)
+            sTheta = np.sin(-self.angleBodypart_i)
             R = np.array([[cTheta, -sTheta],
-                          [sTheta,  cTheta]])  
+                          [sTheta,  cTheta]])
             ptHinge = (self.params['gui'][self.name]['hinge']['x']-self.mask.xMin, self.params['gui'][self.name]['hinge']['y']-self.mask.yMin)
-            
+
             xRel = np.linspace(0, shape[1]-1, shape[1]) - ptHinge[0]
             yRel = np.linspace(0, shape[0]-1, shape[0]) - ptHinge[1]
             (xMesh,yMesh) = np.meshgrid(xRel,yRel)
@@ -366,42 +419,42 @@ class EdgeDetectorByHoughTransform(object):
             angles = self.sense * np.arctan2(yMeshRot,xMeshRot) # The angle from the hinge to each pixel.
         else:
             angles = None
-        
+
         return angles
-        
-        
+
+
     # detect()
     # Get the angles of all the edges that go through the hinge point.
     #
     def detect(self, image):
         if (self.imgAngles is None) or (self.imgAngles.shape != image.shape):
             self.imgAngles = self.CalcAngles(image.shape)
-        
+
         self.imgMasked = cv2.bitwise_and(image, self.mask.img)
-        
+
         # 1 bin per degree.  Note that the bins must be large enough so that the number of pixels in each bin are
         # approximately equal.  If the bins are too small, you'll get false detections due simply to the variation
         # in the number of pixels counted.
         nBins = int(1 * 180/np.pi*(self.params['gui'][self.name]['angle_hi'] - self.params['gui'][self.name]['angle_lo']))
-        
-         
+
+
         lo = self.sense * (self.params['gui'][self.name]['angle_lo'] - self.angleBodypart_b)
         hi = self.sense * (self.params['gui'][self.name]['angle_hi'] - self.angleBodypart_b)
-        (self.intensities, edges) = np.histogram(self.imgAngles, 
-                                                 bins=nBins, 
-                                                 range=(np.min([lo, hi]),np.max([lo, hi])), 
+        (self.intensities, edges) = np.histogram(self.imgAngles,
+                                                 bins=nBins,
+                                                 range=(np.min([lo, hi]),np.max([lo, hi])),
                                                  weights=self.imgMasked.astype(np.float32),
                                                  density=True)
-        
+
         # Center the angles on the edges.
         angles = (edges[1:]-edges[:-1])/2 + edges[:-1]
 
-        # Compute the intensity gradient. 
+        # Compute the intensity gradient.
         n = 1
         a = np.append(self.intensities[n:], self.intensities[-1]*np.ones(n))
         b = np.append(self.intensities[0]*np.ones(n), self.intensities[:-n])
         self.diff = b-a
-        
+
         # Get the N largest values.
         dataset = np.abs(self.diff) #self.intensities
         angles_sorted = []
@@ -412,23 +465,23 @@ class EdgeDetectorByHoughTransform(object):
             angles_sorted.append(angles[iMax])
             magnitudes_sorted.append(dataset2[iMax])
             dataset2[iMax] = 0
-        
+
         return (angles_sorted, magnitudes_sorted)
-        
-           
-    
+
+
+
 # End class EdgeDetectorByHoughTransform
-    
-    
+
+
 ###############################################################################
 ###############################################################################
 # EdgeTrackerByHoughTransform()
-# Track radial bodypart edges using the Hough transform to detect lines through the hinge.  
+# Track radial bodypart edges using the Hough transform to detect lines through the hinge.
 #
 class EdgeTrackerByHoughTransform(MotionTrackedBodypart):
     def __init__(self, name=None, params={}, color='white', bEqualizeHist=False):
         MotionTrackedBodypart.__init__(self, name, params, color, bEqualizeHist)
-        
+
         self.name       = name
         self.detector   = EdgeDetectorByHoughTransform(self.name, params)
         self.state      = MsgState()
@@ -438,16 +491,16 @@ class EdgeTrackerByHoughTransform(MotionTrackedBodypart):
         # Services, for live intensities plots via live_wing_histograms.py
         self.service_trackerdata    = rospy.Service('trackerdata_'+self.name, SrvTrackerdata, self.serve_trackerdata_callback)
 
-    
+
     # set_params()
     # Set the given params dict into this object.
     #
     def set_params(self, params):
         MotionTrackedBodypart.set_params(self, params)
-        
+
         self.imgRoiBackground = None
         self.iCount = 0
-        
+
         self.state.intensity = 0.0
         self.state.angles = []
         self.state.gradients = []
@@ -460,26 +513,26 @@ class EdgeTrackerByHoughTransform(MotionTrackedBodypart):
             a = -1 if (self.name=='right') else 1
             self.sense = a*self.senseAxes
         else:
-            self.sense = 1  
+            self.sense = 1
 
         self.windowEdges.set_enable(self.params['gui']['windows'] and self.params['gui'][self.name]['track'])
         self.bValidDetector = False
-        
-    
-        
+
+
+
     # update_state()
     #
     def update_state(self):
         imgNow = self.imgRoiFgMasked
-        
+
         if (imgNow is not None):
             # Pixel position and strength of the edges.
             (angles, magnitudes) = self.detector.detect(imgNow)
             self.windowEdges.set_image(self.detector.imgMasked)
-            
+
             # Put angle into the bodypart frame.
             self.state.angles = []
-            self.state.gradients = []         
+            self.state.gradients = []
             for i in range(len(angles)):
                 angle = angles[i]
                 magnitude = magnitudes[i]
@@ -487,11 +540,11 @@ class EdgeTrackerByHoughTransform(MotionTrackedBodypart):
                 angle_p = (self.transform_angle_p_from_b(angle_b) + np.pi) % (2*np.pi) - np.pi
                 self.state.angles.append(angle)
                 self.state.gradients.append(magnitude)
-                
+
 
             self.state.intensity = np.mean(self.imgRoiFgMasked)/255.0
 
-        
+
     # update()
     # Update all the internals given a foreground camera image.
     #
@@ -499,9 +552,9 @@ class EdgeTrackerByHoughTransform(MotionTrackedBodypart):
         MotionTrackedBodypart.update(self, dt, image, bInvertColor)
 
         if (self.params['gui'][self.name]['track']):
-            if (not self.bValidDetector):            
+            if (not self.bValidDetector):
                 if (self.mask.xMin is not None):
-                    
+
                     self.detector.set_params(self.name,
                                              self.params,
                                              self.sense,
@@ -510,15 +563,15 @@ class EdgeTrackerByHoughTransform(MotionTrackedBodypart):
                                              image.shape,
                                              self.mask)
                     self.bValidDetector = True
-    
+
             self.update_state()
-    
+
     # draw()
     # Draw the outline.
     #
     def draw(self, image):
         MotionTrackedBodypart.draw(self, image)
-        
+
         if (self.params['gui'][self.name]['track']):
             # Draw the major and minor edges alternately, until the max number has been reached.
             bgra = self.bgra
@@ -532,10 +585,10 @@ class EdgeTrackerByHoughTransform(MotionTrackedBodypart):
                 y1 = self.ptHinge_i[1] + self.params['gui'][self.name]['radius_outer'] * np.sin(angle_i)
                 cv2.line(image, (int(x0),int(y0)), (int(x1),int(y1)), bgra, 1)
                 bgra = tuple(0.5*np.array(bgra))
-                
+
             self.windowEdges.show()
 
-        
+
     def serve_trackerdata_callback(self, request):
         if (len(self.detector.intensities)>0):
             title1      = 'Intensities'
@@ -544,20 +597,17 @@ class EdgeTrackerByHoughTransform(MotionTrackedBodypart):
             abscissa = np.linspace(self.params['gui'][self.name]['angle_lo'], self.params['gui'][self.name]['angle_hi'], len(self.detector.intensities))
             abscissa -= self.angleBodypart_b
             abscissa *= self.sense
-    
+
             markersH = self.state.angles
             markersV = self.state.gradients#[self.params[self.name]['threshold']]
-            
-                
+
+
             rv = SrvTrackerdataResponse(self.color, title1, title2, abscissa, self.detector.intensities, diffs, markersH, markersV)
         else:
             rv = SrvTrackerdataResponse()
-            
+
         return rv
-        
-        
-        
+
+
+
 # end class EdgeTrackerByHoughTransform
-
-    
-
