@@ -22,6 +22,7 @@ class EdgeDetectorByIntensityProfile(object):
         self.intensities = []
         self.diff = []
         self.set_params(threshold, n_edges_max, sense)
+        self.set_detection_method('front')
         """
         self.f=plt.figure()
         self.ax=self.f.add_axes()
@@ -33,6 +34,13 @@ class EdgeDetectorByIntensityProfile(object):
         self.threshold = threshold
         self.n_edges_max = n_edges_max
         self.sense = sense
+
+    def set_detection_method(self, algorithmName):
+        if algorithmName=='front':
+            self.detect = self.detectFront
+        elif algorithmName=='original':
+            self.detect = self.detectOriginal
+        return
 
     def detectFront(self, image):
         axis=0
@@ -59,7 +67,7 @@ class EdgeDetectorByIntensityProfile(object):
     # detect()
     # Get the horizontal pixel position of all the vertical edge pairs that exceed a magnitude threshold.
     #
-    def detect(self, image):
+    def detectOriginal(self, image):
         #print('DEADBEEF')
         """if self.i==200:
             print(image.shape)
@@ -285,6 +293,10 @@ class EdgeTrackerByIntensityProfile(MotionTrackedBodypartPolar):
             self.sense = 1
 
         self.detector.set_params(params[self.name]['threshold'], params['n_edges_max'], self.sense)
+        if params['gui']['switch2simpleEdge']:
+            self.detector.set_detection_method('front')
+        elif params['gui']['switch2origEdge']:
+            self.detector.set_detection_method('original')
 
 
     # update_state()

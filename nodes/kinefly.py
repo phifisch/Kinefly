@@ -20,6 +20,9 @@ from Kinefly.srv import SrvTrackerdata, SrvTrackerdataResponse
 from Kinefly.msg import MsgFlystate, MsgState
 from Kinefly.cfg import kineflyConfig
 import imageprocessing
+#one of these is needed to record bagfile
+import subprocess
+import roslaunch
 
 # gImageTime = 0.0
 gbShowMasks = False
@@ -27,29 +30,29 @@ gbShowMasks = False
 class Struct:
     pass
 
-        
+
 
 ###############################################################################
 ###############################################################################
 # class MainWindow()
-# 
+#
 # This is the main Kinefly window, where we receive images from the camera,
 # process them using the Fly class, and then output the results.
-# 
+#
 class MainWindow:
     def __init__(self):
         self.lockParams = threading.Lock()
         self.lockBuffer = threading.Lock()
-        
+
         # initialize
         rospy.init_node('kinefly')
         self.nodename = rospy.get_name().rstrip('/')
-        
+
         # initialize display
         self.window_name = self.nodename.strip('/')
         cv2.namedWindow(self.window_name,1)
         self.cvbridge = CvBridge()
-        
+
         self.yamlfile = os.path.expanduser(rospy.get_param(self.nodename+'/yamlfile', '~/%s.yaml' % self.nodename.strip('/')))
         with self.lockParams:
             # Load the parameters from server.
@@ -64,7 +67,7 @@ class MainWindow:
                 self.params['gui'] = rosparam.load_file(self.yamlfile)[0][0]
             except (rosparam.RosParamException, IndexError), e:
                 rospy.logwarn('%s.  Using default values.' % e)
-            
+
         defaults = {'filenameBackground':'~/%s.png' % self.nodename.strip('/'),
                     'image_topic':'/camera/image_raw',
                     'n_queue_images':2,
@@ -78,7 +81,7 @@ class MainWindow:
                                'autozero':True,         # Automatically figure out where is the center of motion.
                                'threshold':0.0,
                                'feathering':0.0,        # How much to feather the edge pixels for motion tracking by area.
-                               'saturation_correction':False},        
+                               'saturation_correction':False},
                     'abdomen':{'tracker':'tip',
                                'autozero':True,
                                'threshold':0.0,
@@ -119,7 +122,7 @@ class MainWindow:
                                                 'y':250},
                                        'radius_outer':120,
                                        'radius_inner':100,
-                                       'angle_hi':3.927, 
+                                       'angle_hi':3.927,
                                        'angle_lo':2.3562},
                             'left':   {'track':True,
                                        'subtract_bg':False,
@@ -128,7 +131,7 @@ class MainWindow:
                                                 'y':200},
                                        'radius_outer':80,
                                        'radius_inner':50,
-                                       'angle_hi':-0.7854, 
+                                       'angle_hi':-0.7854,
                                        'angle_lo':-2.3562},
                             'right':  {'track':True,
                                        'subtract_bg':False,
@@ -137,7 +140,7 @@ class MainWindow:
                                                 'y':200},
                                        'radius_outer':80,
                                        'radius_inner':50,
-                                       'angle_hi':2.3562, 
+                                       'angle_hi':2.3562,
                                        'angle_lo':0.7854},
                             'aux':    {'track':True,
                                        'subtract_bg':False,
@@ -146,35 +149,39 @@ class MainWindow:
                                        'radius1':30,
                                        'radius2':20,
                                        'angle':0.0},
+                            'switch2simpleEdge': True,
+                            'switch2origEdge': False,
+                            'recordBag':  False,
                             }
                     }
 
         SetDict().set_dict_with_preserve(self.params, defaults)
         self.params = self.legalizeParams(self.params)
         rospy.set_param(self.nodename+'/gui', self.params['gui'])
-        
+
         self.scale = self.params['scale_image']
         self.bMousing = False
         self.bQuitting = False
-        
+        self.videoRecordProcess = None
+
         # Create the fly.
         self.fly = Fly(self.params)
-        
+
         # Background image.
         self.filenameBackground = os.path.expanduser(self.params['filenameBackground'])
         imgDisk  = cv2.imread(self.filenameBackground, cv2.IMREAD_GRAYSCALE)
         if (imgDisk is not None):
-            if (self.scale == 1.0):              
+            if (self.scale == 1.0):
                 imgFullBackground = imgDisk
-            else:  
+            else:
                 imgFullBackground = cv2.resize(imgDisk, (0,0), fx=self.scale, fy=self.scale)
-             
+
             self.fly.set_background(imgFullBackground)
             self.bHaveBackground = True
         else:
             self.bHaveBackground = False
-        
-        
+
+
         self.nameSelected   = None
         self.uiSelected     = None
         self.stateSelected  = None
@@ -192,16 +199,16 @@ class MainWindow:
         self.iCountCamera   = 0
         self.iCountROS      = 0
         self.iDroppedFrame  = 0
-        
+
         self.nQueuePrev     = 0     # Length of the image queue.
         self.dnQueueF       = 0.0   # Rate of change of the image queue length.
-        
+
         self.bufferImages   = [None]*self.params['n_queue_images'] # Circular buffer for incoming images.
         self.iImgLoading    = 0  # Index of the next slot to load.
         self.iImgWorking    = 0  # Index of the slot to process, i.e. the oldest image in the buffer.
         self.imgUnscaled    = None
         self.imgScaled      = None
-        
+
         self.h_gap          = int(5 * self.scale)
         self.w_gap          = int(10 * self.scale)
         self.scaleText      = 0.4 * self.scale
@@ -209,12 +216,12 @@ class MainWindow:
         self.buttons        = None
         self.yToolbar       = 0
         self.shapeToolbar   = (0,0)
-        
+
         # Publishers.
         self.pubCommand     = rospy.Publisher(self.nodename+'/command',      String, queue_size=self.params['n_queue_images'])
         self.pubImage       = rospy.Publisher(self.nodename+'/image_output', Image,  queue_size=self.params['n_queue_images'])
 
-        # Subscriptions.        
+        # Subscriptions.
         sizeImage = 128+1024*1024 # Size of header + data.
         self.subImage       = rospy.Subscriber(self.params['image_topic'], Image,  self.image_callback,   queue_size=2, buff_size=2*sizeImage, tcp_nodelay=True)
         rospy.logwarn('Subscribed to %s' % self.params['image_topic'])
@@ -222,9 +229,9 @@ class MainWindow:
 
         # user callbacks
         cv2.setMouseCallback(self.window_name, self.onMouse, param=None)
-        
+
         self.reconfigure = dynamic_reconfigure.server.Server(kineflyConfig, self.reconfigure_callback)
-        
+
         # Preload a "Waiting..." image.
         h=int(480)
         w=int(640)
@@ -235,18 +242,17 @@ class MainWindow:
         rosimg = self.cvbridge.cv2_to_imgmsg(imgInitial, 'passthrough')
         self.image_callback(rosimg)
         self.bValidImage = False
-        
+
 
     # Check the given button to see if it extends outside the image, and if so then reposition it to the next line.
     def wrap_button(self, btn, shape):
         if (btn.right >= shape[1]):
             btn.set_pos(pt=[1, btn.bottom+1])
 
-        
-    # Create the button bar, with overflow onto more than one line if needed to fit on the image.        
+
     def create_buttons(self, shape):
         self.shapeToolbar = shape
-        
+
         # UI button specs.
         self.buttons = []
         x = 1
@@ -254,79 +260,79 @@ class MainWindow:
         btn = ui.Button(pt=[x,y], scale=self.scale, type='pushbutton', name='exit', text='exit')
         self.wrap_button(btn, shape)
         self.buttons.append(btn)
-        
+
         x = btn.right+1
         y = btn.top+1
         btn = ui.Button(pt=[x,y], scale=self.scale, type='pushbutton', name='save_bg', text='saveBG')
         self.wrap_button(btn, shape)
         self.buttons.append(btn)
-        
+
         x = btn.right+1
         y = btn.top+1
         btn = ui.Button(pt=[x,y], scale=self.scale, type='static', name='track', text='track:', sides=ui.SIDE_LEFT|ui.SIDE_TOP|ui.SIDE_BOTTOM)
         self.wrap_button(btn, shape)
         self.buttons.append(btn)
-        
+
         x = btn.right+1
         y = btn.top+1
         btn = ui.Button(pt=[x,y], scale=self.scale, type='checkbox', name='head', text='H', state=self.params['gui']['head']['track'], sides=ui.SIDE_TOP|ui.SIDE_BOTTOM)
         self.wrap_button(btn, shape)
         self.buttons.append(btn)
-        
+
         x = btn.right+1
         y = btn.top+1
         btn = ui.Button(pt=[x,y], scale=self.scale, type='checkbox', name='abdomen', text='A', state=self.params['gui']['abdomen']['track'], sides=ui.SIDE_TOP|ui.SIDE_BOTTOM)
         self.wrap_button(btn, shape)
         self.buttons.append(btn)
-        
+
         x = btn.right+1
         y = btn.top+1
         btn = ui.Button(pt=[x,y], scale=self.scale, type='checkbox', name='left', text='L', state=self.params['gui']['left']['track'], sides=ui.SIDE_TOP|ui.SIDE_BOTTOM)
         self.wrap_button(btn, shape)
         self.buttons.append(btn)
-        
+
         x = btn.right+1
         y = btn.top+1
         btn = ui.Button(pt=[x,y], scale=self.scale, type='checkbox', name='right', text='R', state=self.params['gui']['right']['track'], sides=ui.SIDE_TOP|ui.SIDE_BOTTOM)
         self.wrap_button(btn, shape)
         self.buttons.append(btn)
-        
+
         x = btn.right+1
         y = btn.top+1
         btn = ui.Button(pt=[x,y], scale=self.scale, type='checkbox', name='aux', text='X', state=self.params['gui']['aux']['track'], sides=ui.SIDE_TOP|ui.SIDE_BOTTOM|ui.SIDE_RIGHT)
         self.wrap_button(btn, shape)
         self.buttons.append(btn)
-        
+
         x = btn.right+1
         y = btn.top+1
         btn = ui.Button(pt=[x,y], scale=self.scale, type='static', name='subtract', text='subtract:', sides=ui.SIDE_LEFT|ui.SIDE_TOP|ui.SIDE_BOTTOM)
         self.wrap_button(btn, shape)
         self.buttons.append(btn)
-        
+
         x = btn.right+1
         y = btn.top+1
         btn = ui.Button(pt=[x,y], scale=self.scale, type='checkbox', name='subtract_head', text='H', state=self.params['gui']['head']['subtract_bg'], sides=ui.SIDE_TOP|ui.SIDE_BOTTOM)
         self.wrap_button(btn, shape)
         self.buttons.append(btn)
-        
+
         x = btn.right+1
         y = btn.top+1
         btn = ui.Button(pt=[x,y], scale=self.scale, type='checkbox', name='subtract_abdomen', text='A', state=self.params['gui']['abdomen']['subtract_bg'], sides=ui.SIDE_TOP|ui.SIDE_BOTTOM)
         self.wrap_button(btn, shape)
         self.buttons.append(btn)
-        
+
         x = btn.right+1
         y = btn.top+1
         btn = ui.Button(pt=[x,y], scale=self.scale, type='checkbox', name='subtract_lr', text='LR', state=self.params['gui']['right']['subtract_bg'], sides=ui.SIDE_TOP|ui.SIDE_BOTTOM)
         self.wrap_button(btn, shape)
         self.buttons.append(btn)
-        
+
         x = btn.right+1
         y = btn.top+1
         btn = ui.Button(pt=[x,y], scale=self.scale, type='checkbox', name='subtract_aux', text='X', state=self.params['gui']['aux']['subtract_bg'], sides=ui.SIDE_TOP|ui.SIDE_BOTTOM|ui.SIDE_RIGHT)
         self.wrap_button(btn, shape)
         self.buttons.append(btn)
-        
+
         # A button to allow the user to override the automatic invertcolor detector.  A better autodetect algorithm might eliminate the need for this.
         x = btn.right+1
         y = btn.top+1
@@ -334,25 +340,160 @@ class MainWindow:
         self.wrap_button(btn, shape)
         self.buttons.append(btn)
         self.ibtnInvertColor = len(self.buttons)-1
-        
+
         x = btn.right+1
         y = btn.top+1
         btn = ui.Button(pt=[x,y], scale=self.scale, type='checkbox', name='stabilize', text='stabilize', state=self.params['gui']['head']['stabilize'])
         self.wrap_button(btn, shape)
         self.buttons.append(btn)
-        
+
         x = btn.right+1
         y = btn.top+1
         btn = ui.Button(pt=[x,y], scale=self.scale, type='checkbox', name='symmetry', text='symmetric', state=self.params['gui']['symmetric'])
         self.wrap_button(btn, shape)
         self.buttons.append(btn)
-        
+
         x = btn.right+1
         y = btn.top+1
         btn = ui.Button(pt=[x,y], scale=self.scale, type='checkbox', name='windows', text='windows', state=self.params['gui']['windows'])
         self.wrap_button(btn, shape)
         self.buttons.append(btn)
-        
+
+        #button to switch the edge detection method
+        x = btn.right+1
+        y = btn.top+1
+        btn = ui.Button(pt=[x,y], scale=self.scale, type='checkbox', name='switch2simple', text='simple detection', state=self.params['gui']['switch2simpleEdge'])
+        self.wrap_button(btn, shape)
+        self.buttons.append(btn)
+        #actually make it two checkboxes that uncheck each other
+        x = btn.right+1
+        y = btn.top+1
+        btn = ui.Button(pt=[x,y], scale=self.scale, type='checkbox', name='switch2ori', text='original detection', state=self.params['gui']['switch2origEdge'])
+        self.wrap_button(btn, shape)
+        self.buttons.append(btn)
+
+        #button to start recording video
+        x = btn.right+1
+        y = btn.top+1
+        btn = ui.Button(pt=[x,y], scale=self.scale, type='pushbutton', name='recordBag', text='record video start/stop', state=self.params['gui']['recordBag'])
+        self.wrap_button(btn, shape)
+        self.buttons.append(btn)
+
+
+        self.yToolbar = btn.bottom + 1
+
+
+
+    # Create the button bar, with overflow onto more than one line if needed to fit on the image.
+    def create_buttons_BAK(self, shape):
+        self.shapeToolbar = shape
+
+        # UI button specs.
+        self.buttons = []
+        x = 1
+        y = 1
+        btn = ui.Button(pt=[x,y], scale=self.scale, type='pushbutton', name='exit', text='exit')
+        self.wrap_button(btn, shape)
+        self.buttons.append(btn)
+
+        x = btn.right+1
+        y = btn.top+1
+        btn = ui.Button(pt=[x,y], scale=self.scale, type='pushbutton', name='save_bg', text='saveBG')
+        self.wrap_button(btn, shape)
+        self.buttons.append(btn)
+
+        x = btn.right+1
+        y = btn.top+1
+        btn = ui.Button(pt=[x,y], scale=self.scale, type='static', name='track', text='track:', sides=ui.SIDE_LEFT|ui.SIDE_TOP|ui.SIDE_BOTTOM)
+        self.wrap_button(btn, shape)
+        self.buttons.append(btn)
+
+        x = btn.right+1
+        y = btn.top+1
+        btn = ui.Button(pt=[x,y], scale=self.scale, type='checkbox', name='head', text='H', state=self.params['gui']['head']['track'], sides=ui.SIDE_TOP|ui.SIDE_BOTTOM)
+        self.wrap_button(btn, shape)
+        self.buttons.append(btn)
+
+        x = btn.right+1
+        y = btn.top+1
+        btn = ui.Button(pt=[x,y], scale=self.scale, type='checkbox', name='abdomen', text='A', state=self.params['gui']['abdomen']['track'], sides=ui.SIDE_TOP|ui.SIDE_BOTTOM)
+        self.wrap_button(btn, shape)
+        self.buttons.append(btn)
+
+        x = btn.right+1
+        y = btn.top+1
+        btn = ui.Button(pt=[x,y], scale=self.scale, type='checkbox', name='left', text='L', state=self.params['gui']['left']['track'], sides=ui.SIDE_TOP|ui.SIDE_BOTTOM)
+        self.wrap_button(btn, shape)
+        self.buttons.append(btn)
+
+        x = btn.right+1
+        y = btn.top+1
+        btn = ui.Button(pt=[x,y], scale=self.scale, type='checkbox', name='right', text='R', state=self.params['gui']['right']['track'], sides=ui.SIDE_TOP|ui.SIDE_BOTTOM)
+        self.wrap_button(btn, shape)
+        self.buttons.append(btn)
+
+        x = btn.right+1
+        y = btn.top+1
+        btn = ui.Button(pt=[x,y], scale=self.scale, type='checkbox', name='aux', text='X', state=self.params['gui']['aux']['track'], sides=ui.SIDE_TOP|ui.SIDE_BOTTOM|ui.SIDE_RIGHT)
+        self.wrap_button(btn, shape)
+        self.buttons.append(btn)
+
+        x = btn.right+1
+        y = btn.top+1
+        btn = ui.Button(pt=[x,y], scale=self.scale, type='static', name='subtract', text='subtract:', sides=ui.SIDE_LEFT|ui.SIDE_TOP|ui.SIDE_BOTTOM)
+        self.wrap_button(btn, shape)
+        self.buttons.append(btn)
+
+        x = btn.right+1
+        y = btn.top+1
+        btn = ui.Button(pt=[x,y], scale=self.scale, type='checkbox', name='subtract_head', text='H', state=self.params['gui']['head']['subtract_bg'], sides=ui.SIDE_TOP|ui.SIDE_BOTTOM)
+        self.wrap_button(btn, shape)
+        self.buttons.append(btn)
+
+        x = btn.right+1
+        y = btn.top+1
+        btn = ui.Button(pt=[x,y], scale=self.scale, type='checkbox', name='subtract_abdomen', text='A', state=self.params['gui']['abdomen']['subtract_bg'], sides=ui.SIDE_TOP|ui.SIDE_BOTTOM)
+        self.wrap_button(btn, shape)
+        self.buttons.append(btn)
+
+        x = btn.right+1
+        y = btn.top+1
+        btn = ui.Button(pt=[x,y], scale=self.scale, type='checkbox', name='subtract_lr', text='LR', state=self.params['gui']['right']['subtract_bg'], sides=ui.SIDE_TOP|ui.SIDE_BOTTOM)
+        self.wrap_button(btn, shape)
+        self.buttons.append(btn)
+
+        x = btn.right+1
+        y = btn.top+1
+        btn = ui.Button(pt=[x,y], scale=self.scale, type='checkbox', name='subtract_aux', text='X', state=self.params['gui']['aux']['subtract_bg'], sides=ui.SIDE_TOP|ui.SIDE_BOTTOM|ui.SIDE_RIGHT)
+        self.wrap_button(btn, shape)
+        self.buttons.append(btn)
+
+        # A button to allow the user to override the automatic invertcolor detector.  A better autodetect algorithm might eliminate the need for this.
+        x = btn.right+1
+        y = btn.top+1
+        btn = ui.Button(pt=[x,y], scale=self.scale, type='checkbox', name='invertcolor', text='invertcolor', state=self.fly.bInvertColor)
+        self.wrap_button(btn, shape)
+        self.buttons.append(btn)
+        self.ibtnInvertColor = len(self.buttons)-1
+
+        x = btn.right+1
+        y = btn.top+1
+        btn = ui.Button(pt=[x,y], scale=self.scale, type='checkbox', name='stabilize', text='stabilize', state=self.params['gui']['head']['stabilize'])
+        self.wrap_button(btn, shape)
+        self.buttons.append(btn)
+
+        x = btn.right+1
+        y = btn.top+1
+        btn = ui.Button(pt=[x,y], scale=self.scale, type='checkbox', name='symmetry', text='symmetric', state=self.params['gui']['symmetric'])
+        self.wrap_button(btn, shape)
+        self.buttons.append(btn)
+
+        x = btn.right+1
+        y = btn.top+1
+        btn = ui.Button(pt=[x,y], scale=self.scale, type='checkbox', name='windows', text='windows', state=self.params['gui']['windows'])
+        self.wrap_button(btn, shape)
+        self.buttons.append(btn)
+
         self.yToolbar = btn.bottom + 1
 
 
@@ -366,34 +507,34 @@ class MainWindow:
                 if ('hinge' in paramsOut['gui'][partname]):
                     if ('x' in paramsOut['gui'][partname]['hinge']):
                         paramsOut['gui'][partname]['hinge']['x'] = max(0, paramsOut['gui'][partname]['hinge']['x'])
-        
+
                     if ('y' in paramsOut['gui'][partname]['hinge']):
                         paramsOut['gui'][partname]['hinge']['y'] = max(0, paramsOut['gui'][partname]['hinge']['y'])
-    
+
                 if ('radius_inner' in paramsOut['gui'][partname]):
                     paramsOut['gui'][partname]['radius_inner'] = max(5*paramsOut['scale_image'], paramsOut['gui'][partname]['radius_inner'])
-    
+
                 if ('radius_outer' in paramsOut['gui'][partname]) and ('radius_inner' in paramsOut['gui'][partname]):
                     paramsOut['gui'][partname]['radius_outer'] = max(paramsOut['gui'][partname]['radius_outer'], paramsOut['gui'][partname]['radius_inner']+5*paramsOut['scale_image'])
 
         return paramsOut
-        
-        
+
+
     def reconfigure_callback(self, config, level):
         # Save the new params.
         SetDict().set_dict_with_overwrite(self.params, config)
-        
+
         # Remove dynamic_reconfigure keys from the params.
         try:
             self.params.pop('groups')
         except KeyError:
             pass
-        
+
         # Set it into the wings.
         self.fly.set_params(self.scale_params(self.params, self.scale))
         with self.lockParams:
             rosparam.dump_params(self.yamlfile, self.nodename+'/gui')
-        
+
         return config
 
 
@@ -402,10 +543,10 @@ class MainWindow:
     #
     def command_callback(self, msg):
         self.command = msg.data
-        
+
         if (self.command == 'exit'):
             self.bQuitting = True
-            
+
             # Save the params.
             SetDict().set_dict_with_preserve(self.params, rospy.get_param(self.nodename, {}))
             rospy.set_param(self.nodename+'/gui', self.params['gui'])
@@ -413,20 +554,22 @@ class MainWindow:
                 rosparam.dump_params(self.yamlfile, self.nodename+'/gui')
 
             rospy.signal_shutdown('User requested exit.')
-        
-        
+
+
         if (self.command == 'save_background'):
             self.save_background()
-            
-        
+
+        if (self.command == 'record'):
+            self.toggleRecording()
+
         if (self.command == 'gui_on'):
             self.params['use_gui'] = True
-            
-        
+
+
         if (self.command == 'gui_off'):
             self.params['use_gui'] = False
-            
-        
+
+
         if (self.command == 'help'):
             rospy.logwarn('The %s/command topic accepts the following string commands:' % self.nodename)
             rospy.logwarn('  help                 This message.')
@@ -440,26 +583,26 @@ class MainWindow:
             rospy.logwarn('rostopic pub -1 %s/command std_msgs/String commandtext' % self.nodename)
             rospy.logwarn('')
 
-        
-        
+
+
     def scale_params(self, paramsIn, scale):
         paramsScaled = copy.deepcopy(paramsIn)
 
         for partname in ['head', 'abdomen', 'left', 'right']:
-            paramsScaled['gui'][partname]['hinge']['x'] = (paramsIn['gui'][partname]['hinge']['x']*scale)  
-            paramsScaled['gui'][partname]['hinge']['y'] = (paramsIn['gui'][partname]['hinge']['y']*scale)  
-            paramsScaled['gui'][partname]['radius_outer'] = (paramsIn['gui'][partname]['radius_outer']*scale)  
-            paramsScaled['gui'][partname]['radius_inner'] = (paramsIn['gui'][partname]['radius_inner']*scale)  
-            
+            paramsScaled['gui'][partname]['hinge']['x'] = (paramsIn['gui'][partname]['hinge']['x']*scale)
+            paramsScaled['gui'][partname]['hinge']['y'] = (paramsIn['gui'][partname]['hinge']['y']*scale)
+            paramsScaled['gui'][partname]['radius_outer'] = (paramsIn['gui'][partname]['radius_outer']*scale)
+            paramsScaled['gui'][partname]['radius_inner'] = (paramsIn['gui'][partname]['radius_inner']*scale)
+
         for partname in ['aux']:
-            paramsScaled['gui'][partname]['center']['x'] = (paramsIn['gui'][partname]['center']['x']*scale)  
-            paramsScaled['gui'][partname]['center']['y'] = (paramsIn['gui'][partname]['center']['y']*scale)  
-            paramsScaled['gui'][partname]['radius1'] = (paramsIn['gui'][partname]['radius1']*scale)  
-            paramsScaled['gui'][partname]['radius2'] = (paramsIn['gui'][partname]['radius2']*scale)  
-            
-        return paramsScaled  
-    
-    
+            paramsScaled['gui'][partname]['center']['x'] = (paramsIn['gui'][partname]['center']['x']*scale)
+            paramsScaled['gui'][partname]['center']['y'] = (paramsIn['gui'][partname]['center']['y']*scale)
+            paramsScaled['gui'][partname]['radius1'] = (paramsIn['gui'][partname]['radius1']*scale)
+            paramsScaled['gui'][partname]['radius2'] = (paramsIn['gui'][partname]['radius2']*scale)
+
+        return paramsScaled
+
+
     # Draw user-interface elements on the image.
     def draw_buttons(self, image):
         if (self.buttons is not None):
@@ -483,12 +626,12 @@ class MainWindow:
                     iImgLoadingNext = (self.iImgLoading+1) % len(self.bufferImages)
                     iImgWorkingNext = (self.iImgWorking+1) % len(self.bufferImages)
                     self.iDroppedFrame += 1
-    
+
                 # Put the image into the queue.
                 self.bufferImages[self.iImgLoading] = rosimg
                 self.iImgLoading = iImgLoadingNext
                 self.iImgWorking = iImgWorkingNext
-            
+
 #            # Warn if the camera is delaying.
 #            if (self.stampROSimagePrev is not None):
 #                if (self.stampCamera.to_sec() - self.stampROSimagePrev.to_sec() > 1):
@@ -498,9 +641,9 @@ class MainWindow:
 
             self.bValidImage = True
 
-            
 
-                
+
+
     def process_image_fake(self):
         with self.lockBuffer:
             # Mark this buffer entry as available for loading.
@@ -509,17 +652,17 @@ class MainWindow:
             # Go to the next image.
             self.iImgWorking = (self.iImgWorking+1) % len(self.bufferImages)
 
-                
-                
+
+
     def process_image(self):
         rosimg = None
-        
+
         with self.lockBuffer:
             # The image queue length.
             nQueue = (self.iImgLoading - self.iImgWorking) %  len(self.bufferImages)
             if (nQueue==0) and (self.bufferImages[self.iImgLoading] is not None):
                 nQueue += len(self.bufferImages)
-                        
+
             # Rate of change of the queue length.
             if (nQueue == len(self.bufferImages)):
                 dnQueue = 1.0
@@ -527,28 +670,28 @@ class MainWindow:
                 dnQueue = -1.0
             else:
                 dnQueue = nQueue - self.nQueuePrev
-    
+
             # Bring the bar back to red, if it's green and we dropped a frame.
             if (self.iDroppedFrame>0) and (self.dnQueueF<0.0):
                 self.dnQueueF = 0.1
-            else:  
+            else:
                 a = 0.001
                 self.dnQueueF = (1-a)*self.dnQueueF + a*dnQueue
-            
+
             self.aQueue = float(nQueue)/float(len(self.bufferImages))
             self.nQueuePrev = nQueue
-                    
-                    
+
+
             # Pull the image from the queue.
             if (self.bufferImages[self.iImgWorking] is not None):
                 rosimg = self.bufferImages[self.iImgWorking]
-                
+
                 # Mark this buffer entry as available for loading.
                 self.bufferImages[self.iImgWorking] = None
-    
+
                 # Go to the next image.
                 self.iImgWorking = (self.iImgWorking+1) % len(self.bufferImages)
-                
+
 
             if False:#('kinefly2' in self.nodename):
                 rospy.logwarn('nQueue %3d, dnQueue %3d, dnQueueF %0.3f' % (nQueue, dnQueue, self.dnQueueF))
@@ -567,19 +710,19 @@ class MainWindow:
         # Compute system freq.
         hzROS = 1/self.dtROS
         self.iCountROS += 1
-        if (self.iCountROS > 100):                     
+        if (self.iCountROS > 100):
             a= 0.04 # Filter the framerate.
-            self.hzROSF = (1-a)*self.hzROSF + a*hzROS 
-        else:                                       
-            if (self.iCountROS>20):             # Get past the transient response.       
-                self.hzROSSum += hzROS                 
+            self.hzROSF = (1-a)*self.hzROSF + a*hzROS
+        else:
+            if (self.iCountROS>20):             # Get past the transient response.
+                self.hzROSSum += hzROS
             else:
-                self.hzROSSum = hzROS * self.iCountROS     
-                
+                self.hzROSSum = hzROS * self.iCountROS
+
             self.hzROSF = self.hzROSSum / self.iCountROS
-                        
-            
-        if (rosimg is not None):            
+
+
+        if (rosimg is not None):
             # Compute processing times.
             self.stampCamera     = rosimg.header.stamp
             self.stampCameraDiff = (self.stampCamera - self.stampCameraPrev)
@@ -589,63 +732,63 @@ class MainWindow:
             # If the camera is not giving good timestamps, then use our own clock.
             if (self.dtCamera == 0.0):
                 self.dtCamera = self.dtROS
-                
+
             # If time wrapped, then just assume a value.
             if (self.dtCamera == 0.0):
                 self.dtCamera = 1.0
-                    
+
             # Compute processing freq.
             hzCamera = 1/self.dtCamera
             self.iCountCamera += 1
-            if (self.iCountCamera > 100):                     
+            if (self.iCountCamera > 100):
                 a= 0.01 # Filter the framerate.
-                self.hzCameraF = (1-a)*self.hzCameraF + a*hzCamera 
-            else:                                       
-                if (self.iCountCamera>20):             # Get past the transient response.       
-                    self.hzCameraSum += hzCamera                 
+                self.hzCameraF = (1-a)*self.hzCameraF + a*hzCamera
+            else:
+                if (self.iCountCamera>20):             # Get past the transient response.
+                    self.hzCameraSum += hzCamera
                 else:
-                    self.hzCameraSum = hzCamera * self.iCountCamera     
-                    
+                    self.hzCameraSum = hzCamera * self.iCountCamera
+
                 self.hzCameraF = self.hzCameraSum / self.iCountCamera
-                        
+
 
             # Convert the image.
             try:
                 img = self.cvbridge.imgmsg_to_cv2(rosimg, 'passthrough')
-                
+
             except CvBridgeError, e:
                 rospy.logwarn ('Exception converting background image from ROS to opencv:  %s' % e)
                 img = np.zeros((320,240))
 
             # Scale the image.
             self.imgUnscaled = img
-            if (self.scale == 1.0):              
+            if (self.scale == 1.0):
                 self.imgScaled = self.imgUnscaled
-            else:  
-                self.imgScaled = cv2.resize(img, (0,0), fx=self.scale, fy=self.scale) 
+            else:
+                self.imgScaled = cv2.resize(img, (0,0), fx=self.scale, fy=self.scale)
 
-            
+
             self.shapeImage = self.imgScaled.shape # (height,width)
-            
-            # Create the button bar if needed.    
+
+            # Create the button bar if needed.
             if (self.buttons is None) or (self.imgScaled.shape != self.shapeToolbar):
                 self.create_buttons(self.imgScaled.shape)
-        
+
             if (not self.bMousing) and (self.bValidImage):
                 # Update the fly internals.
                 self.fly.update(rosimg.header, self.imgScaled)
-    
+
                 # Publish the outputs.
                 self.start()
                 self.fly.publish()
                 self.stop()
-                
-            
+
+
             if (self.params['use_gui']):
-        
+
                 imgOutput = cv2.cvtColor(self.imgScaled, cv2.COLOR_GRAY2RGB)
                 self.fly.draw(imgOutput)
-            
+
                 x_left   = int(10 * self.scale)
                 y_bottom = int(imgOutput.shape[0] - 10 * self.scale)
                 x_right  = int(imgOutput.shape[1] - 10 * self.scale)
@@ -662,7 +805,7 @@ class MainWindow:
                         s += '    Dropped Frames: %d' % self.iDroppedFrame
                     cv2.putText(imgOutput, s, (x, y), self.fontface, self.scaleText, ui.bgra_dict['dark_red'] )
                     h_text = int(h * self.scale)
-                    
+
                     # Draw the gauge bar for the image queue length.
                     nBar = int(50*self.scale) # pixels max.
                     xBar = int(x+110*self.scale)
@@ -673,25 +816,25 @@ class MainWindow:
                         bgra = ui.bgra_dict['dark_red']
                     else:
                         bgra = ui.bgra_dict['dark_green']
-                        
+
                     cv2.line(imgOutput, ptBar0, ptBar1, bgra, max(1,int(2*self.scale)))
-                
-    
+
+
                     # Output the aux state.
                     if (self.params['gui']['aux']['track']):
                         y -= h_text+self.h_gap
                         s = 'AUX: (%0.3f)' % (self.fly.aux.state.intensity)
                         cv2.putText(imgOutput, s, (x, y), self.fontface, self.scaleText, self.fly.aux.bgra)
                         h_text = int(h * self.scale)
-                    
+
                         y -= h_text+self.h_gap
                         s = 'WB Freq: '
                         if (self.fly.aux.state.freq != 0.0):
                             s += '%0.0fhz' % (self.fly.aux.state.freq)
                         cv2.putText(imgOutput, s, (x, y), self.fontface, self.scaleText, self.fly.aux.bgra)
                         h_text = int(h * self.scale)
-                    
-    
+
+
                     # Output the wings state.
                     if (self.params['gui']['left']['track']) and (self.params['gui']['right']['track']):
                         # L+R
@@ -702,8 +845,8 @@ class MainWindow:
                             s += '% 7.4f' % leftplusright
                         cv2.putText(imgOutput, s, (x, y), self.fontface, self.scaleText, ui.bgra_dict['blue'])
                         h_text = int(h * self.scale)
-        
-                            
+
+
                         # L-R
                         y -= h_text+self.h_gap
                         s = 'L-R:'
@@ -712,7 +855,7 @@ class MainWindow:
                             s += '% 7.4f' % leftminusright
                         cv2.putText(imgOutput, s, (x, y), self.fontface, self.scaleText, ui.bgra_dict['blue'])
                         h_text = int(h * self.scale)
-        
+
                     if (self.params['gui']['right']['track']):
                         # Right
                         y -= h_text+self.h_gap
@@ -723,7 +866,7 @@ class MainWindow:
                             #    s += ', % 7.4f' % self.fly.right.state.angles[i]
                         cv2.putText(imgOutput, s, (x, y), self.fontface, self.scaleText, self.fly.right.bgra)
                         h_text = int(h * self.scale)
-            
+
                     if (self.params['gui']['left']['track']):
                         # Left
                         y -= h_text+self.h_gap
@@ -734,10 +877,10 @@ class MainWindow:
                             #    s += ', % 7.4f' % self.fly.left.state.angles[i]
                         cv2.putText(imgOutput, s, (x, y), self.fontface, self.scaleText, self.fly.left.bgra)
                         h_text = int(h * self.scale)
-                        
-                            
-    
-    
+
+
+
+
                     # Output the abdomen state.
                     if (self.params['gui']['abdomen']['track']):
                         y -= h_text+self.h_gap
@@ -747,8 +890,8 @@ class MainWindow:
 
                         cv2.putText(imgOutput, s, (x, y), self.fontface, self.scaleText, self.fly.abdomen.bgra)
                         h_text = int(h * self.scale)
-                    
-    
+
+
                     # Output the head state.
                     if (self.params['gui']['head']['track']):
                         y -= h_text+self.h_gap
@@ -768,7 +911,7 @@ class MainWindow:
                 self.pubImage.publish(rosimgOutput)
 
 
-                self.buttons[self.ibtnInvertColor].state = self.fly.bInvertColor # Set the button state to reflect the fly's bInvertColor flag. 
+                self.buttons[self.ibtnInvertColor].state = self.fly.bInvertColor # Set the button state to reflect the fly's bInvertColor flag.
                 self.draw_buttons(imgOutput)
 
                 # Display the image.
@@ -777,12 +920,12 @@ class MainWindow:
 #         else:
 #             if (self.hzROSF != 0.0):
 #                 rospy.sleep(1/self.hzROSF) # Pretend we spent time processing.
-        
+
         cv2.waitKey(1)
 
     # End process_image()
-            
-                
+
+
     # save_background()
     # Save the current camera image as the background.
     #
@@ -791,25 +934,58 @@ class MainWindow:
         cv2.imwrite(self.filenameBackground, self.imgUnscaled)
         self.fly.set_background(self.imgScaled)
         self.bHaveBackground = True
-    
-    
+
+
+    def toggleRecording(self):
+        #find out the current state of the button
+        #  first find the button
+        for iButton in range(len(self.buttons)):
+            if (self.buttons[iButton].name=='recordBag'):
+                startRecording = self.buttons[iButton].state #get the state
+                break
+        #using python os or subprocess library
+        if startRecording and self.videoRecordProcess is None:
+            print('start record')
+            print('DEADBEEF################################')
+            self.videoRecordProcess = subprocess.Popen(['roslaunch', 'Kinefly', 'record.launch'])#if necessary (because blocking until shutdown) add &
+            #debugging#self.videoRecordProcess = subprocess.Popen(['ls', '-a'])
+        else:
+
+            self.videoRecordProcess.terminate()
+            self.buttons[iButton].state = False
+            self.videoRecordProcess = None
+        '''
+        ##there is a way to do it using roslaunch, maybe better, just slightly intransparent
+        #  -> like so (http://wiki.ros.org/roslaunch/API%20Usage)
+        if startRecording:
+            import roslaunch
+            rospy.init_node('en_Mapping', anonymous=True)
+            uuid = roslaunch.rlutil.get_or_generate_uuid(None, False)
+            roslaunch.configure_logging(uuid)
+            launch = roslaunch.parent.ROSLaunchParent(uuid, ["../launch/record.launch"])
+            launch.start()
+            rospy.logwarn("started recording bagfile")
+        else:
+            launch.shutdown()
+        '''
+
     # hit_object()
     # Get the nearest handle point or button to the mouse point.
     # ptMouse    = [x,y]
-    # Returns the partname, tag, and ui of item the mouse has hit, using the 
+    # Returns the partname, tag, and ui of item the mouse has hit, using the
     # convention that the name is of the form "tag_partname", e.g. "hinge_left"
     #
     def hit_object(self, ptMouse):
         tagHit  = None
         partnameHit = None
         uiHit = None
-        
+
         # Check for button press.
         iButtonHit = None
         for iButton in range(len(self.buttons)):
             if (self.buttons[iButton].hit_test(ptMouse)):
                 iButtonHit = iButton
-            
+
         if (iButtonHit is not None):
             nameNearest = self.buttons[iButtonHit].name
             (tagHit,delim,partnameHit) = nameNearest.partition('_')
@@ -828,20 +1004,20 @@ class MainWindow:
                 tagHit  = tag[i]
                 partnameHit = partname[i]
                 uiHit = 'handle'
-    
-        
+
+
         return (uiHit, tagHit, partnameHit, iButtonHit)
-        
-        
+
+
     # Convert tag and partname strings to a name string:  tag_partname
     def name_from_tagpartname(self, tag, partname):
         if (partname is not None) and (len(partname)>0):
             name = tag+'_'+partname
         else:
             name = tag
-            
+
         return name
-    
+
 
     def bodypart_from_partname(self, partname):
         if (partname=='left'):
@@ -858,10 +1034,10 @@ class MainWindow:
             bodypart = self.fly.axis
         else:
             bodypart = None
-            
+
         return bodypart
-    
-                
+
+
     # update_params_from_mouse()
     # Recalculate self.params based on a currently selected handle and mouse location.
     #
@@ -874,10 +1050,10 @@ class MainWindow:
         bodypartSlave    = self.bodypart_from_partname(partnameSlave)
 
         # Scale the parameters in order to work on them.
-        paramsScaled = self.scale_params(self.params, self.scale) 
-        
+        paramsScaled = self.scale_params(self.params, self.scale)
+
         # Hinge.
-        if (tagSelected=='hinge'): 
+        if (tagSelected=='hinge'):
             if (partnameSelected=='head') or (partnameSelected=='abdomen'):
 
                 # Get the hinge points pre-move.
@@ -900,14 +1076,14 @@ class MainWindow:
                 pt = ptMouse
                 paramsScaled['gui'][partnameSelected]['hinge']['x'] = float(pt[0])
                 paramsScaled['gui'][partnameSelected]['hinge']['y'] = float(pt[1])
-                
+
                 # Invalidate the masks.
                 self.fly.axis.bValidMask    = False
                 self.fly.head.bValidMask    = False
                 self.fly.abdomen.bValidMask = False
                 self.fly.left.bValidMask    = False
                 self.fly.right.bValidMask   = False
-                
+
                 # Now move the hinge points relative to the new body axis.
                 if (paramsScaled['gui']['symmetric']):
                     ptHead = np.array([paramsScaled['gui']['head']['hinge']['x'], paramsScaled['gui']['head']['hinge']['y']])
@@ -922,7 +1098,7 @@ class MainWindow:
                     paramsScaled['gui']['right']['hinge']['x'] = float(ptRight[0])
                     paramsScaled['gui']['right']['hinge']['y'] = float(ptRight[1])
 
-                    
+
             elif (partnameSelected=='left') or (partnameSelected=='right'):
                 paramsScaled['gui'][partnameSelected]['hinge']['x'] = float(ptMouse[0])
                 paramsScaled['gui'][partnameSelected]['hinge']['y'] = float(ptMouse[1])
@@ -938,7 +1114,7 @@ class MainWindow:
 
         elif (tagSelected in ['angle_hi','angle_lo']):
             pt = ptMouse - bodypartSelected.ptHinge_i
-            if (tagSelected=='angle_lo'): 
+            if (tagSelected=='angle_lo'):
                 angle_lo_b = float(bodypartSelected.transform_angle_b_from_i(np.arctan2(pt[1], pt[0])))
 
                 if (partnameSelected in ['head','abdomen']) and (paramsScaled['gui']['symmetric']):
@@ -948,39 +1124,39 @@ class MainWindow:
 
             elif (tagSelected=='angle_hi'):
                 angle_hi_b = float(bodypartSelected.transform_angle_b_from_i(np.arctan2(pt[1], pt[0])))
-                
+
                 if (partnameSelected in ['head','abdomen']) and (paramsScaled['gui']['symmetric']):
                     angle_lo_b = -angle_hi_b
                 else:
                     angle_lo_b = paramsScaled['gui'][partnameSelected][tagOther]
-            
-            paramsScaled['gui'][partnameSelected]['radius_outer'] = float(max(bodypartSelected.params['gui'][partnameSelected]['radius_inner']+2*self.scale, 
+
+            paramsScaled['gui'][partnameSelected]['radius_outer'] = float(max(bodypartSelected.params['gui'][partnameSelected]['radius_inner']+2*self.scale,
                                                                               np.linalg.norm(bodypartSelected.ptHinge_i - ptMouse)))
-                
+
             # Make angles relative to bodypart origin.
             angle_lo_b -= bodypartSelected.angleBodypart_b
             angle_lo_b = (angle_lo_b+np.pi) % (2.0*np.pi) - np.pi
             angle_hi_b -= bodypartSelected.angleBodypart_b
             angle_hi_b = (angle_hi_b+np.pi) % (2.0*np.pi) - np.pi
-            
+
             # Switch to the other handle.
             if (not (angle_lo_b < angle_hi_b)):
                 self.tagSelected = tagOther
-                
+
             # Set the order of the two angles
             paramsScaled['gui'][partnameSelected]['angle_lo'] = min(angle_lo_b, angle_hi_b)
             paramsScaled['gui'][partnameSelected]['angle_hi'] = max(angle_lo_b, angle_hi_b)
-            
-            # Make angles relative to fly origin. 
+
+            # Make angles relative to fly origin.
             paramsScaled['gui'][partnameSelected]['angle_lo'] += bodypartSelected.angleBodypart_b
             paramsScaled['gui'][partnameSelected]['angle_hi'] += bodypartSelected.angleBodypart_b
             paramsScaled['gui'][partnameSelected]['angle_lo'] = (paramsScaled['gui'][partnameSelected]['angle_lo']+np.pi) % (2.0*np.pi) - np.pi
             paramsScaled['gui'][partnameSelected]['angle_hi'] = (paramsScaled['gui'][partnameSelected]['angle_hi']+np.pi) % (2.0*np.pi) - np.pi
-            
-            
+
+
             if (paramsScaled['gui'][partnameSelected]['angle_hi'] < paramsScaled['gui'][partnameSelected]['angle_lo']):
                 paramsScaled['gui'][partnameSelected]['angle_hi'] += 2*np.pi
-            
+
             bodypartSelected.bValidMask = False
 
             if (partnameSelected in ['left','right']):
@@ -990,25 +1166,25 @@ class MainWindow:
                     paramsScaled['gui'][partnameSlave]['radius_outer'] = paramsScaled['gui'][partnameSelected]['radius_outer']
                     paramsScaled['gui'][partnameSlave]['radius_inner'] = paramsScaled['gui'][partnameSelected]['radius_inner']
                     bodypartSlave.bValidMask = False
-                    
+
 #                 if (paramsScaled['gui'][partnameSlave]['angle_hi'] < 0 < paramsScaled['gui'][partnameSlave]['angle_lo']):
 #                     paramsScaled['gui'][partnameSlave]['angle_hi'] += 2*np.pi
- 
-              
+
+
         # Inner radius.
-        elif (tagSelected=='radius_inner'): 
-            paramsScaled['gui'][partnameSelected]['radius_inner'] = float(min(np.linalg.norm(bodypartSelected.ptHinge_i - ptMouse), 
+        elif (tagSelected=='radius_inner'):
+            paramsScaled['gui'][partnameSelected]['radius_inner'] = float(min(np.linalg.norm(bodypartSelected.ptHinge_i - ptMouse),
                                                                               bodypartSelected.params['gui'][partnameSelected]['radius_outer']-2*self.scale))
-            
+
             bodypartSelected.bValidMask = False
-            
+
             if (partnameSelected in ['left','right']) and (paramsScaled['gui']['symmetric']):
                 paramsScaled['gui'][partnameSlave]['radius_outer'] = paramsScaled['gui'][partnameSelected]['radius_outer']
                 paramsScaled['gui'][partnameSlave]['radius_inner'] = paramsScaled['gui'][partnameSelected]['radius_inner']
                 bodypartSlave.bValidMask = False
-                
+
         # Center.
-        elif (tagSelected=='center'): 
+        elif (tagSelected=='center'):
             if (partnameSelected=='aux'):
 
                 # Move the center point.
@@ -1016,33 +1192,33 @@ class MainWindow:
                 paramsScaled['gui'][partnameSelected]['center']['x'] = float(pt[0])
                 paramsScaled['gui'][partnameSelected]['center']['y'] = float(pt[1])
                 bodypartSelected.bValidMask = False
-                
+
         # Axis Points.
-        elif (tagSelected in ['pt1','pt2']): 
+        elif (tagSelected in ['pt1','pt2']):
             if (partnameSelected=='axis'):
                 # Move the point.
                 pt = ptMouse
                 paramsScaled['gui'][partnameSelected][tagSelected]['x'] = float(pt[0])
                 paramsScaled['gui'][partnameSelected][tagSelected]['y'] = float(pt[1])
                 bodypartSelected.bValidMask = False
-                
+
         # Radius.
-        elif (tagSelected=='radius1'): 
+        elif (tagSelected=='radius1'):
             pt = ptMouse - bodypartSelected.ptCenter_i
             paramsScaled['gui'][partnameSelected]['radius1'] = float(np.linalg.norm(pt))
             paramsScaled['gui'][partnameSelected]['angle'] = float(np.arctan2(pt[1], pt[0]))
-            bodypartSelected.bValidMask = False        
-        elif (tagSelected=='radius2'): 
+            bodypartSelected.bValidMask = False
+        elif (tagSelected=='radius2'):
             pt = bodypartSelected.ptCenter_i - ptMouse
             paramsScaled['gui'][partnameSelected]['radius2'] = float(np.linalg.norm(pt))
             paramsScaled['gui'][partnameSelected]['angle'] = float(np.arctan2(pt[1], pt[0])-np.pi/2.0)
-            bodypartSelected.bValidMask = False        
-                
+            bodypartSelected.bValidMask = False
+
 
         # Unscale the parameters since we're finished adjusting them.
         self.params = self.scale_params(paramsScaled, 1/self.scale)
-        
-    # End update_params_from_mouse() 
+
+    # End update_params_from_mouse()
 
 
     # onMouse()
@@ -1054,7 +1230,7 @@ class MainWindow:
         # Keep track of which UI element is selected.
         if (event==cv2.EVENT_LBUTTONDOWN):
             self.bMousing = True
-            
+
             # Get the name and ui nearest the current point.
             (ui, tag, partname, iButtonSelected) = self.hit_object(ptMouse)
             self.tagSelected = tag                                          # hinge, angle_hi, angle_lo, center, radius1, radius2, radius_inner.
@@ -1066,10 +1242,10 @@ class MainWindow:
 
             if (self.iButtonSelected is not None):
                 self.stateSelected = self.buttons[self.iButtonSelected].state
-            
+
             self.nameSelectedNow = self.nameSelected
             self.uiSelectedNow = self.uiSelected
-            
+
 
         if (self.uiSelected=='pushbutton') or (self.uiSelected=='checkbox'):
             # Get the partname and ui tag nearest the mouse point.
@@ -1081,14 +1257,16 @@ class MainWindow:
             self.iButtonSelectedNow  = iButtonSelected
 
 
-            # Set selected button to 'down', others to 'up'.
+            # Set selected button to 'down', others to 'up'.->change the latter
             for iButton in range(len(self.buttons)):
                 if (self.buttons[iButton].type=='pushbutton'):
                     if (iButton==self.iButtonSelectedNow==self.iButtonSelected) and not (event==cv2.EVENT_LBUTTONUP):
+                        #self.buttons[iButton].state = True # 'down'
                         self.buttons[iButton].state = True # 'down'
-                    else:
-                        self.buttons[iButton].state = False # 'up'
-                        
+                        break #added after commenting "else" part
+                    #else:#this is now done when the command is sent (few lines down)
+                    #    self.buttons[iButton].state = False # 'up'
+
             # Set the checkbox.
             if (self.uiSelected=='checkbox'):
                 if (self.nameSelected == self.nameSelectedNow):
@@ -1098,25 +1276,33 @@ class MainWindow:
 
         # end if ('pushbutton' or 'checkbox'):
 
-                        
+
         elif (self.uiSelected=='handle'):
             # Set the new params.
             self.update_params_from_mouse(self.tagSelected, self.partnameSelected, ptMouse.clip((0,self.yToolbar), (self.shapeImage[1],self.shapeImage[0])))
             self.fly.set_params(self.scale_params(self.params, self.scale))
-        
+
         # end if ('handle'):
-            
+
 
         if (event==cv2.EVENT_LBUTTONUP):
             # If the mouse is on the same button at mouseup, then do the action.
             if (self.uiSelected=='pushbutton'):
                 if (self.nameSelected == self.nameSelectedNow == 'save_bg'):
+                    #"consume" the button, put it back in "up"-position
+                    self.buttons[iButtonSelected].state = False
                     self.pubCommand.publish('save_background')
 
                 elif (self.nameSelected == self.nameSelectedNow == 'exit'):
+                    self.buttons[iButtonSelected].state = False #button back up
                     self.pubCommand.publish('exit')
-                    
-                    
+
+                elif (self.nameSelected == self.nameSelectedNow == 'recordBag'):
+                    #this one has to stay down
+                    #self.buttons[iButtonSelected].state = True
+                    self.pubCommand.publish('record')
+
+
             elif (self.uiSelected=='checkbox'):
                 if (self.nameSelected == self.nameSelectedNow):
                     self.buttons[self.iButtonSelected].state = not self.stateSelected
@@ -1126,7 +1312,7 @@ class MainWindow:
 
                 if (self.nameSelected == self.nameSelectedNow == 'symmetry'):
                     self.params['gui']['symmetric'] = self.buttons[self.iButtonSelected].state
-                    
+
                 elif (self.nameSelected == self.nameSelectedNow == 'subtract_lr'):
                     if (not self.bHaveBackground):
                         self.buttons[iButtonSelected].state = False
@@ -1134,31 +1320,31 @@ class MainWindow:
 
                     self.params['gui']['left']['subtract_bg']  = self.buttons[iButtonSelected].state
                     self.params['gui']['right']['subtract_bg'] = self.buttons[iButtonSelected].state
-                    
+
                 elif (self.nameSelected == self.nameSelectedNow == 'subtract_aux'):
                     if (not self.bHaveBackground):
                         self.buttons[iButtonSelected].state = False
                         rospy.logwarn('No background image.  Cannot use background subtraction for aux.')
 
                     self.params['gui']['aux']['subtract_bg']  = self.buttons[iButtonSelected].state
-                    
+
                 elif (self.nameSelected == self.nameSelectedNow == 'subtract_head'):
                     if (not self.bHaveBackground):
                         self.buttons[iButtonSelected].state = False
                         rospy.logwarn('No background image.  Cannot use background subtraction for head.')
 
                     self.params['gui']['head']['subtract_bg']  = self.buttons[iButtonSelected].state
-                    
+
                 elif (self.nameSelected == self.nameSelectedNow == 'subtract_abdomen'):
                     if (not self.bHaveBackground):
                         self.buttons[iButtonSelected].state = False
                         rospy.logwarn('No background image.  Cannot use background subtraction for abdomen.')
 
                     self.params['gui']['abdomen']['subtract_bg']  = self.buttons[iButtonSelected].state
-                    
+
                 elif (self.nameSelected == self.nameSelectedNow == 'head'):
                     self.params['gui']['head']['track'] = self.buttons[iButtonSelected].state
-                    
+
                 elif (self.nameSelected == self.nameSelectedNow == 'abdomen'):
                     self.params['gui']['abdomen']['track'] = self.buttons[iButtonSelected].state
 
@@ -1172,7 +1358,7 @@ class MainWindow:
                     self.params['gui']['aux']['track'] = self.buttons[iButtonSelected].state
                     if (self.params['gui']['aux']['track']):
                         self.fly.aux.wingbeat.warn()
-                    
+
                 # A button to allow the user to override the automatic invertcolor detector.  A better autodetect algorithm might eliminate the need for this.
                 elif (self.nameSelected == self.nameSelectedNow == 'invertcolor'):
                     self.fly.bInvertColor      = self.buttons[iButtonSelected].state
@@ -1188,11 +1374,26 @@ class MainWindow:
                 elif (self.nameSelected == self.nameSelectedNow == 'windows'):
                     self.params['gui']['windows'] = self.buttons[iButtonSelected].state
 
+                #### adding own checkbox buttons here
+                elif (self.nameSelected == self.nameSelectedNow == 'switch2simple'):
+                    self.params['gui']['switch2simpleEdge'] = self.buttons[iButtonSelected].state
+                    #important to keep the order of switch2simple and switch2ori
+                    self.buttons[iButtonSelected+1].state = not self.buttons[iButtonSelected].state
+                    self.params['gui']['switch2origEdge'] = self.buttons[iButtonSelected+1].state
+                    #?? do we need to call some command here ourselves?
+                elif (self.nameSelected == self.nameSelectedNow == 'switch2ori'):
+                    self.params['gui']['switch2simpleEdge'] = self.buttons[iButtonSelected].state
+                    #important to keep the order of switch2simple and switch2ori
+                    self.buttons[iButtonSelected-1].state = not self.buttons[iButtonSelected].state
+                    self.params['gui']['switch2origEdge'] = self.buttons[iButtonSelected-1].state
+                    #?? do we need to call some command here ourselves?
+                    # ->probably is done by calling self.fly.set_params(...) later (l380), for handles and checkboxes
+
 
             if (self.uiSelected in ['handle','checkbox']):
                 self.fly.set_params(self.scale_params(self.params, self.scale))
                 self.fly.create_masks(self.shapeImage)
-    
+
                 # Save the results.
                 SetDict().set_dict_with_preserve(self.params, rospy.get_param(self.nodename, {}))
 
@@ -1206,7 +1407,7 @@ class MainWindow:
 #                 if (type(v)==type({})):
 #                     for k2,v2 in v.iteritems():
 #                         rospy.logwarn('     %s, %s' % (k2,type(v2)))
-                
+
 
             self.bMousing           = False
             self.nameSelected       = None
@@ -1215,24 +1416,24 @@ class MainWindow:
             self.uiSelectedNow      = None
             self.iButtonSelected    = None
             self.iButtonSelectedNow = None
-        
+
     # End onMouse()
 
-            
+
     def start(self):
         self.t0 = rospy.Time.now().to_sec()
-                
+
     def stop(self):
         self.t1 = rospy.Time.now().to_sec()
-                
+
     def run(self):
         if (self.params['gui']['aux']['track']):
             self.fly.aux.wingbeat.warn()
-        
+
         tMin = np.Inf
         tMax = -np.Inf
         i = 0
-        
+
         bFailed = False
         while (not rospy.is_shutdown()):
             self.process_image()
@@ -1244,7 +1445,7 @@ class MainWindow:
 #                 tMax = np.max([tMax, self.t1-self.t0])
 #                 rospy.logwarn('tMin=%0.6f, t=%0.6f, tMax=%0.6f' % (tMin, self.t1-self.t0, tMax))
 
-                
+
 #             # Profile the cause of dropped frames.  Profile up to the point we get a bunch of drops, and keep that result.
 #             if ('kinefly2' in rospy.get_name().rstrip('/')):
 #                 if not bFailed:
@@ -1282,4 +1483,3 @@ if __name__ == '__main__':
     # $ ln -s "$PWD"/gprof2dot/gprof2dot.py ~/bin
     # $ cd /home/ssafarik
     # $ ~/bin/gprof2dot.py -f pstats profile.pstats | dot -Tsvg -o callgraph.svg
-    
