@@ -17,19 +17,19 @@ bgra_dict = {'black'         : (  0.0,   0.0,   0.0, 0.0),
              'gray'          : (128.0, 128.0, 128.0, 0.0),
              'light_gray'    : (192.0, 192.0, 192.0, 0.0),
              'red'           : (  0.0,   0.0, 255.0, 0.0),
-             'green'         : (  0.0, 255.0,   0.0, 0.0), 
+             'green'         : (  0.0, 255.0,   0.0, 0.0),
              'blue'          : (255.0,   0.0,   0.0, 0.0),
              'cyan'          : (255.0, 255.0,   0.0, 0.0),
              'magenta'       : (255.0,   0.0, 255.0, 0.0),
              'yellow'        : (  0.0, 255.0, 255.0, 0.0),
              'dark_red'      : (  0.0,   0.0, 128.0, 0.0),
-             'dark_green'    : (  0.0, 128.0,   0.0, 0.0), 
+             'dark_green'    : (  0.0, 128.0,   0.0, 0.0),
              'dark_blue'     : (128.0,   0.0,   0.0, 0.0),
              'dark_cyan'     : (128.0, 128.0,   0.0, 0.0),
              'dark_magenta'  : (128.0,   0.0, 128.0, 0.0),
              'dark_yellow'   : (  0.0, 128.0, 128.0, 0.0),
              'light_red'     : (175.0, 175.0, 255.0, 0.0),
-             'light_green'   : (175.0, 255.0, 175.0, 0.0), 
+             'light_green'   : (175.0, 255.0, 175.0, 0.0),
              'light_blue'    : (255.0, 175.0, 175.0, 0.0),
              'light_cyan'    : (255.0, 255.0, 175.0, 0.0),
              'light_magenta' : (255.0, 175.0, 255.0, 0.0),
@@ -40,19 +40,21 @@ bgra_dict = {'black'         : (  0.0,   0.0,   0.0, 0.0),
 
 ###############################################################################
 ###############################################################################
+###############################################################################
+###############################################################################
 class Button(object):
     def __init__(self, name=None, text=None, pt=None, rect=None, scale=1.0, type='pushbutton', state=False, sides=SIDE_ALL):
         self.name = name
         self.pt = pt
         self.rect = rect
         self.scale = scale
-        self.type = type            # 'pushbutton' or 'checkbox'
+        self.type = type            # 'pushbutton' or 'checkbox' #add 'textbox'
         self.state = state
         self.sides = sides
-        
+
         self.widthCheckbox = 10*self.scale
         self.set_text(text)
-        
+
         # Set the colors of the button types that don't change based on their state.
         if (self.type=='pushbutton'):
             self.colorFill = bgra_dict['gray']
@@ -74,6 +76,15 @@ class Button(object):
             self.colorFill = bgra_dict['light_gray']
             self.colorText = bgra_dict['white']
             self.colorCheck = bgra_dict['black']
+        elif self.type=='textbox':
+            self.colorFill = bgra_dict['light_gray']
+            self.colorText = bgra_dict['black']
+            self.colorCheck = bgra_dict['black']
+            #text processing
+            tmptext = text.split(': ')
+            if len(tmptext)>2:  Warning('text in textbox ambiguous during init!')
+            self.constText = tmptext[0]
+            self.varText = tmptext[1]
 
 
     # hit_test()
@@ -84,14 +95,14 @@ class Button(object):
             return True
         else:
             return False
-        
+
     # set_pos()
     # Set the button to locate at the given upper-left point, or to the given rect.
     #
     def set_pos(self, pt=None, rect=None):
         if (rect is not None):
             self.rect = rect
-            
+
         elif (pt is not None):
             self.pt = pt
             self.rect = [0,0,0,0]
@@ -101,8 +112,8 @@ class Button(object):
             self.rect[3] = self.sizeText[1] + 6
             if (self.type=='checkbox'):
                 self.rect[2] += int(self.widthCheckbox + 4)
-                
-        
+
+
             # Position adjustments for missing sides.
             (l,r,t,b) = (0,0,0,0)
             if (self.sides & SIDE_LEFT)==0:
@@ -115,49 +126,50 @@ class Button(object):
                 b = 1
 
 
-            # Set the locations of the various button pieces.        
-            
+            # Set the locations of the various button pieces.
+
             # The colorOuter lines.
             self.ptLT0 = (self.rect[0]-1,              self.rect[1]-1)
             self.ptRT0 = (self.rect[0]+self.rect[2]+1, self.rect[1]-1)
             self.ptLB0 = (self.rect[0]-1,              self.rect[1]+self.rect[3]+1)
             self.ptRB0 = (self.rect[0]+self.rect[2]+1, self.rect[1]+self.rect[3]+1)
-    
+
             # The colorInner lines.
             self.ptLT1 = (self.rect[0]+l,                 self.rect[1]+t)
             self.ptRT1 = (self.rect[0]+self.rect[2]+r,    self.rect[1]+t)
             self.ptLB1 = (self.rect[0]+l,                 self.rect[1]+self.rect[3]+b)
             self.ptRB1 = (self.rect[0]+self.rect[2]+r,    self.rect[1]+self.rect[3]+b)
-    
+
             # The colorLolight & colorHilight lines.
             self.ptLT2 = (self.rect[0]+1+2*l,              self.rect[1]+1+2*t)
             self.ptRT2 = (self.rect[0]+self.rect[2]-1+2*r, self.rect[1]+1+2*t)
             self.ptLB2 = (self.rect[0]+1+2*l,              self.rect[1]+self.rect[3]-1+2*b)
             self.ptRB2 = (self.rect[0]+self.rect[2]-1+2*r, self.rect[1]+self.rect[3]-1+2*b)
-    
+
             # Fill color.
             self.ptLT3 = (self.rect[0]+2+3*l,              self.rect[1]+2+3*t)
             self.ptRT3 = (self.rect[0]+self.rect[2]-2+3*r, self.rect[1]+2+3*t)
             self.ptLB3 = (self.rect[0]+2+3*l,              self.rect[1]+self.rect[3]-2+3*b)
             self.ptRB3 = (self.rect[0]+self.rect[2]-2+3*r, self.rect[1]+self.rect[3]-2+3*b)
 
-    
+
             self.left   = self.ptLT0[0]
             self.top    = self.ptLT0[1]
             self.right  = self.ptRB0[0]
             self.bottom = self.ptRB0[1]
-            
-            if (self.type=='pushbutton') or (self.type=='static'):
+
+            #if (self.type=='pushbutton') or (self.type=='static'):
+            if self.type in ['pushbutton','static','textbox']:
                 self.ptCenter = (int(self.rect[0]+self.rect[2]/2),                          int(self.rect[1]+self.rect[3]/2))
-                self.ptText = (self.ptCenter[0] - int(self.sizeText[0]/2) - 1, 
+                self.ptText = (self.ptCenter[0] - int(self.sizeText[0]/2) - 1,
                                self.ptCenter[1] + int(self.sizeText[1]/2) - 1)
             elif (self.type=='checkbox'):
                 self.ptCenter = (int(self.rect[0]+self.rect[2]/2+(self.widthCheckbox+4)/2), int(self.rect[1]+self.rect[3]/2))
-                self.ptText = (self.ptCenter[0] - int(self.sizeText[0]/2) - 1 + 2, 
+                self.ptText = (self.ptCenter[0] - int(self.sizeText[0]/2) - 1 + 2,
                                self.ptCenter[1] + int(self.sizeText[1]/2) - 1)
 
             self.ptText0 = (self.ptText[0], self.ptText[1])
-                
+
             self.ptCheckCenter = (int(self.ptLT3[0] + 2 + self.widthCheckbox/2), self.ptCenter[1])
             self.ptCheckLT     = (int(self.ptCheckCenter[0]-self.widthCheckbox/2), int(self.ptCheckCenter[1]-self.widthCheckbox/2))
             self.ptCheckRT     = (int(self.ptCheckCenter[0]+self.widthCheckbox/2), int(self.ptCheckCenter[1]-self.widthCheckbox/2))
@@ -165,7 +177,8 @@ class Button(object):
             self.ptCheckRB     = (int(self.ptCheckCenter[0]+self.widthCheckbox/2), int(self.ptCheckCenter[1]+self.widthCheckbox/2))
 
         else:
-            rospy.logwarn('Error setting button size and position.')
+            pass#commented line below fort esting on machines without rospy
+            #rospy.logwarn('Error setting button size and position.')
 
 
     # set_text()
@@ -175,10 +188,13 @@ class Button(object):
         self.text = text
         (sizeText,rv) = cv2.getTextSize(self.text, cv2.FONT_HERSHEY_SIMPLEX, 0.4*self.scale, 1)
         self.sizeText = (sizeText[0],    sizeText[1])
-        
+
         self.set_pos(pt=self.pt, rect=self.rect)
 
-                
+    #update the text, necessary for textbox type
+    #def update_text(self):
+
+
     # draw_button()
     # Draw a 3D shaded button with text.
     # rect is (left, top, width, height), increasing y goes down.
@@ -197,7 +213,22 @@ class Button(object):
                 self.colorHilight = bgra_dict['dark_gray']
                 self.colorLolight = bgra_dict['light_gray']
                 self.ptText0 = (self.ptText[0]+2, self.ptText[1]+2)
-            
+        elif self.type=='textbox':
+            if (not self.state): # 'up'
+                self.colorOuter = bgra_dict['white']
+                self.colorInner = bgra_dict['black']
+                self.colorHilight = bgra_dict['light_gray']
+                self.colorLolight = bgra_dict['dark_gray']
+                self.colorFill = bgra_dict['light_gray']
+                self.ptText0 = (self.ptText[0], self.ptText[1])
+            else:
+                self.colorOuter = bgra_dict['white']
+                self.colorInner = bgra_dict['black']
+                self.colorHilight = bgra_dict['dark_gray']
+                self.colorLolight = bgra_dict['light_gray']
+                self.colorFill = bgra_dict['white']
+                self.ptText0 = (self.ptText[0]+2, self.ptText[1]+2)
+
 
         # Draw outer, inner, hilights & lolights.
         if (self.sides & SIDE_LEFT):
@@ -220,7 +251,7 @@ class Button(object):
         # Draw the fill.
         cv_filled = -1
         cv2.rectangle(image, self.ptLT3, self.ptRB3, self.colorFill, cv_filled)
-        
+
         # Draw the checkbox.
         if (self.type=='checkbox'):
             cv2.rectangle(image, self.ptCheckLT, self.ptCheckRB, self.colorCheck, 1)
@@ -230,10 +261,10 @@ class Button(object):
 
         # Draw the text.
         cv2.putText(image, self.text, self.ptText0, cv2.FONT_HERSHEY_SIMPLEX, 0.4*self.scale, self.colorText)
-        
-# end class Button                
-    
-            
+
+# end class Button
+
+
 ###############################################################################
 ###############################################################################
 class Handle(object):
@@ -253,19 +284,16 @@ class Handle(object):
             return True
         else:
             return False
-        
+
 
     # draw()
     # Draw a handle.
-    # 
+    #
     def draw(self, image):
         cv_filled = -1
         cv2.circle(image, tuple(self.pt.astype(int)),  self.radiusDraw, self.color, cv_filled)
-        
+
         #ptText = self.pt+np.array([5,5])
         #cv2.putText(image, self.name, tuple(ptText.astype(int)), cv2.FONT_HERSHEY_SIMPLEX, 0.4*self.scale, self.color)
-        
+
 # end class Handle
-                
-
-

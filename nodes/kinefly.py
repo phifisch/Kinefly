@@ -20,9 +20,9 @@ from Kinefly.srv import SrvTrackerdata, SrvTrackerdataResponse
 from Kinefly.msg import MsgFlystate, MsgState
 from Kinefly.cfg import kineflyConfig
 import imageprocessing
-#one of these is needed to record bagfile
+#one of these is needed to record bagfile, depending on method
 import subprocess
-import roslaunch
+#import roslaunch
 
 # gImageTime = 0.0
 gbShowMasks = False
@@ -152,6 +152,7 @@ class MainWindow:
                             'switch2simpleEdge': True,
                             'switch2origEdge': False,
                             'recordBag':  False,
+                            'threshold':  {'state':False, 'value':0.01}
                             }
                     }
 
@@ -250,6 +251,7 @@ class MainWindow:
             btn.set_pos(pt=[1, btn.bottom+1])
 
 
+    # Create the button bar, with overflow onto more than one line if needed to fit on the image.
     def create_buttons(self, shape):
         self.shapeToolbar = shape
 
@@ -379,120 +381,15 @@ class MainWindow:
         self.wrap_button(btn, shape)
         self.buttons.append(btn)
 
-
-        self.yToolbar = btn.bottom + 1
-
-
-
-    # Create the button bar, with overflow onto more than one line if needed to fit on the image.
-    def create_buttons_BAK(self, shape):
-        self.shapeToolbar = shape
-
-        # UI button specs.
-        self.buttons = []
-        x = 1
-        y = 1
-        btn = ui.Button(pt=[x,y], scale=self.scale, type='pushbutton', name='exit', text='exit')
-        self.wrap_button(btn, shape)
-        self.buttons.append(btn)
-
+        #textbox to set threshold value
         x = btn.right+1
         y = btn.top+1
-        btn = ui.Button(pt=[x,y], scale=self.scale, type='pushbutton', name='save_bg', text='saveBG')
+        #!important: text needa to contain ': ' as delimiter
+        btn = ui.Button(pt=[x,y], scale=self.scale, type='textbox', name='threshold', text='threshold: '+str(self.params['gui']['threshold']['value']), state=self.params['gui']['threshold']['state'])
         self.wrap_button(btn, shape)
         self.buttons.append(btn)
+        self.thresholdButton = btn
 
-        x = btn.right+1
-        y = btn.top+1
-        btn = ui.Button(pt=[x,y], scale=self.scale, type='static', name='track', text='track:', sides=ui.SIDE_LEFT|ui.SIDE_TOP|ui.SIDE_BOTTOM)
-        self.wrap_button(btn, shape)
-        self.buttons.append(btn)
-
-        x = btn.right+1
-        y = btn.top+1
-        btn = ui.Button(pt=[x,y], scale=self.scale, type='checkbox', name='head', text='H', state=self.params['gui']['head']['track'], sides=ui.SIDE_TOP|ui.SIDE_BOTTOM)
-        self.wrap_button(btn, shape)
-        self.buttons.append(btn)
-
-        x = btn.right+1
-        y = btn.top+1
-        btn = ui.Button(pt=[x,y], scale=self.scale, type='checkbox', name='abdomen', text='A', state=self.params['gui']['abdomen']['track'], sides=ui.SIDE_TOP|ui.SIDE_BOTTOM)
-        self.wrap_button(btn, shape)
-        self.buttons.append(btn)
-
-        x = btn.right+1
-        y = btn.top+1
-        btn = ui.Button(pt=[x,y], scale=self.scale, type='checkbox', name='left', text='L', state=self.params['gui']['left']['track'], sides=ui.SIDE_TOP|ui.SIDE_BOTTOM)
-        self.wrap_button(btn, shape)
-        self.buttons.append(btn)
-
-        x = btn.right+1
-        y = btn.top+1
-        btn = ui.Button(pt=[x,y], scale=self.scale, type='checkbox', name='right', text='R', state=self.params['gui']['right']['track'], sides=ui.SIDE_TOP|ui.SIDE_BOTTOM)
-        self.wrap_button(btn, shape)
-        self.buttons.append(btn)
-
-        x = btn.right+1
-        y = btn.top+1
-        btn = ui.Button(pt=[x,y], scale=self.scale, type='checkbox', name='aux', text='X', state=self.params['gui']['aux']['track'], sides=ui.SIDE_TOP|ui.SIDE_BOTTOM|ui.SIDE_RIGHT)
-        self.wrap_button(btn, shape)
-        self.buttons.append(btn)
-
-        x = btn.right+1
-        y = btn.top+1
-        btn = ui.Button(pt=[x,y], scale=self.scale, type='static', name='subtract', text='subtract:', sides=ui.SIDE_LEFT|ui.SIDE_TOP|ui.SIDE_BOTTOM)
-        self.wrap_button(btn, shape)
-        self.buttons.append(btn)
-
-        x = btn.right+1
-        y = btn.top+1
-        btn = ui.Button(pt=[x,y], scale=self.scale, type='checkbox', name='subtract_head', text='H', state=self.params['gui']['head']['subtract_bg'], sides=ui.SIDE_TOP|ui.SIDE_BOTTOM)
-        self.wrap_button(btn, shape)
-        self.buttons.append(btn)
-
-        x = btn.right+1
-        y = btn.top+1
-        btn = ui.Button(pt=[x,y], scale=self.scale, type='checkbox', name='subtract_abdomen', text='A', state=self.params['gui']['abdomen']['subtract_bg'], sides=ui.SIDE_TOP|ui.SIDE_BOTTOM)
-        self.wrap_button(btn, shape)
-        self.buttons.append(btn)
-
-        x = btn.right+1
-        y = btn.top+1
-        btn = ui.Button(pt=[x,y], scale=self.scale, type='checkbox', name='subtract_lr', text='LR', state=self.params['gui']['right']['subtract_bg'], sides=ui.SIDE_TOP|ui.SIDE_BOTTOM)
-        self.wrap_button(btn, shape)
-        self.buttons.append(btn)
-
-        x = btn.right+1
-        y = btn.top+1
-        btn = ui.Button(pt=[x,y], scale=self.scale, type='checkbox', name='subtract_aux', text='X', state=self.params['gui']['aux']['subtract_bg'], sides=ui.SIDE_TOP|ui.SIDE_BOTTOM|ui.SIDE_RIGHT)
-        self.wrap_button(btn, shape)
-        self.buttons.append(btn)
-
-        # A button to allow the user to override the automatic invertcolor detector.  A better autodetect algorithm might eliminate the need for this.
-        x = btn.right+1
-        y = btn.top+1
-        btn = ui.Button(pt=[x,y], scale=self.scale, type='checkbox', name='invertcolor', text='invertcolor', state=self.fly.bInvertColor)
-        self.wrap_button(btn, shape)
-        self.buttons.append(btn)
-        self.ibtnInvertColor = len(self.buttons)-1
-
-        x = btn.right+1
-        y = btn.top+1
-        btn = ui.Button(pt=[x,y], scale=self.scale, type='checkbox', name='stabilize', text='stabilize', state=self.params['gui']['head']['stabilize'])
-        self.wrap_button(btn, shape)
-        self.buttons.append(btn)
-
-        x = btn.right+1
-        y = btn.top+1
-        btn = ui.Button(pt=[x,y], scale=self.scale, type='checkbox', name='symmetry', text='symmetric', state=self.params['gui']['symmetric'])
-        self.wrap_button(btn, shape)
-        self.buttons.append(btn)
-
-        x = btn.right+1
-        y = btn.top+1
-        btn = ui.Button(pt=[x,y], scale=self.scale, type='checkbox', name='windows', text='windows', state=self.params['gui']['windows'])
-        self.wrap_button(btn, shape)
-        self.buttons.append(btn)
 
         self.yToolbar = btn.bottom + 1
 
@@ -561,6 +458,9 @@ class MainWindow:
 
         if (self.command == 'record'):
             self.toggleRecording()
+
+        if self.command == 'setThreshold':
+            self.setThreshold()
 
         if (self.command == 'gui_on'):
             self.params['use_gui'] = True
@@ -921,7 +821,10 @@ class MainWindow:
 #             if (self.hzROSF != 0.0):
 #                 rospy.sleep(1/self.hzROSF) # Pretend we spent time processing.
 
-        cv2.waitKey(1)
+        if self.thresholdButton.state:
+            self.setThreshold()
+        else:
+            cv2.waitKey(1)
 
     # End process_image()
 
@@ -968,6 +871,35 @@ class MainWindow:
         else:
             launch.shutdown()
         '''
+
+
+    def setThreshold(self):
+        #as long as button is True after being pressed
+        #if self.thresholdButton.state:
+        #wait for key
+        #    while True:
+        k = cv2.waitKey(10) & 0xFF
+        #if the key is a number, append to text
+        if k in range(48,58) or k==ord('.'): #range from 0 to 9 or .
+            self.thresholdButton.text += chr(k)
+            #self.thresholdButton.set_text(self.thresholdButton.text)
+            #elif enter or click, set state to false and update params
+        elif k==13: #carriage return '\r'
+            try:
+                self.params['gui']['threshold']['value'] = float(self.thresholdButton.varText)
+                self.params['threshold'] = float(self.thresholdButton.varText)
+                #set variable text part, state and params
+                self.thresholdButton.varText = self.thresholdButton.text.split(': ')[1]
+            except ValueError:
+                self.thresholdButton.varText = str(self.params['gui']['threshold']['value'])
+                self.thresholdButton.text = self.thresholdButton.constText+': '+self.thresholdButton.varText
+            finally:
+                self.thresholdButton.state = False
+                self.params['gui']['threshold']['state'] = False
+
+            self.fly.set_params(self.scale_params(self.params, self.scale))
+        #else ignore
+
 
     # hit_object()
     # Get the nearest handle point or button to the mouse point.
@@ -1247,7 +1179,7 @@ class MainWindow:
             self.uiSelectedNow = self.uiSelected
 
 
-        if (self.uiSelected=='pushbutton') or (self.uiSelected=='checkbox'):
+        if (self.uiSelected=='pushbutton') or (self.uiSelected=='checkbox') or (self.uiSelected=='textbox'):
             # Get the partname and ui tag nearest the mouse point.
             (ui, tag, partname, iButtonSelected) = self.hit_object(ptMouse)
             self.nameSelectedNow     = self.name_from_tagpartname(tag,partname)
@@ -1259,7 +1191,7 @@ class MainWindow:
 
             # Set selected button to 'down', others to 'up'.->change the latter
             for iButton in range(len(self.buttons)):
-                if (self.buttons[iButton].type=='pushbutton'):
+                if (self.buttons[iButton].type in ['pushbutton','textbox']):
                     if (iButton==self.iButtonSelectedNow==self.iButtonSelected) and not (event==cv2.EVENT_LBUTTONUP):
                         #self.buttons[iButton].state = True # 'down'
                         self.buttons[iButton].state = True # 'down'
@@ -1301,6 +1233,12 @@ class MainWindow:
                     #this one has to stay down
                     #self.buttons[iButtonSelected].state = True
                     self.pubCommand.publish('record')
+
+            elif (self.uiSelected=='textbox'):
+                #button stays down (after EVENT_LBUTTONDOWN)
+                self.buttons[iButtonSelected].text = self.buttons[iButtonSelected].constText+': '
+                #self.pubCommand.publish('setThreshold')
+                self.setThreshold()
 
 
             elif (self.uiSelected=='checkbox'):
