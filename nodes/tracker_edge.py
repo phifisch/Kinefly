@@ -9,8 +9,7 @@ from Kinefly.srv import SrvTrackerdata, SrvTrackerdataResponse
 from Kinefly.msg import MsgFlystate, MsgState
 import ui
 
-import matplotlib.pyplot as plt
-from numpy import set_printoptions, nan, save
+from numpy import set_printoptions, nan
 set_printoptions(threshold=nan)
 
 ###############################################################################
@@ -46,17 +45,21 @@ class EdgeDetectorByIntensityProfile(object):
         axis=0
         intensitiesRaw = np.sum(image, axis).astype(np.float32)
         intensitiesRaw /= (255.0*image.shape[axis]) # Put into range [0,1]
-        self.intensities = intensitiesRaw#filter_median(intensitiesRaw, q=1)
+        self.intensities = intensitiesRaw
+        #self.intensities = filter_median(intensitiesRaw, q=1)
         # Compute the intensity gradient.
         n = 3
         a = np.append(self.intensities[n:], self.intensities[-1]*np.ones(n))
         b = np.append(self.intensities[0]*np.ones(n), self.intensities[:-n])
-        self.diff = b-a
+        self.diff = (b-a)*float(self.sense)
+        #self.diff = a-b
 
-        #threshold=0.01
         inds = np.where(self.diff>self.threshold)
         if inds[0].size >0:
-            firstInd = inds[0][-self.sense:] #last from behind is front most in image
+            if self.sense==-1:
+                firstInd = inds[0][:1] #last from behind is front most in image
+            else:
+                firstInd = inds[0][-1:] #last from behind is front most in image
         else:
             firstInd = inds[0]
         #edges_list = [firstInd]
@@ -288,7 +291,7 @@ class EdgeTrackerByIntensityProfile(MotionTrackedBodypartPolar):
         if (self.name in ['left','right']):
             self.senseAxes = np.sign(np.linalg.det(matAxes))
             a = -1 if (self.name=='right') else 1
-            self.sense = a*self.senseAxes
+            self.sense = int(np.round(a*self.senseAxes))
         else:
             self.sense = 1
 
@@ -311,7 +314,7 @@ class EdgeTrackerByIntensityProfile(MotionTrackedBodypartPolar):
             """EDIT THIS IF NOT HAPPY"""
             #(edges, gradients) = self.detector.detect(imgNow)
             ###ADDED PRIMITIVE FRONT EDGE DETECTION, ORIGINAL ABOVE
-            (edges, gradients) = self.detector.detectFront(imgNow)
+            (edges, gradients) = self.detector.detect(imgNow)
             #####
 
             anglePerPixel = (self.params['gui'][self.name]['angle_hi']-self.params['gui'][self.name]['angle_lo']) / float(imgNow.shape[1])

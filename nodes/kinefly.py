@@ -887,17 +887,20 @@ class MainWindow:
         elif k==13: #carriage return '\r'
             try:
                 self.params['gui']['threshold']['value'] = float(self.thresholdButton.varText)
-                self.params['threshold'] = float(self.thresholdButton.varText)
+                self.params['left']['threshold'] = float(self.thresholdButton.varText)
+                self.params['right']['threshold'] = float(self.thresholdButton.varText)
                 #set variable text part, state and params
                 self.thresholdButton.varText = self.thresholdButton.text.split(': ')[1]
+                rospy.logwarn('setting new threshold')
             except ValueError:
+                rospy.logwarn('invalid value in threshold textbox, ignored')
                 self.thresholdButton.varText = str(self.params['gui']['threshold']['value'])
                 self.thresholdButton.text = self.thresholdButton.constText+': '+self.thresholdButton.varText
             finally:
                 self.thresholdButton.state = False
                 self.params['gui']['threshold']['state'] = False
 
-            self.fly.set_params(self.scale_params(self.params, self.scale))
+                self.fly.set_params(self.scale_params(self.params, self.scale))
         #else ignore
 
 
