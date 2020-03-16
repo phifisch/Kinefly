@@ -60,6 +60,8 @@ class Flystate2PhidgetsAnalog:
         self.subFlystate = rospy.Subscriber('%s/flystate' % self.namespace.rstrip('/'), MsgFlystate, self.flystate_callback, queue_size=1000)
         self.subCommand  = rospy.Subscriber('%s/command' % self.namespace.rstrip('/'), String, self.command_callback, queue_size=1000)
         #rospy.sleep(1) # Allow time to connect publishers & subscribers.
+        
+        self.isRecording=False
 
         self.bInitialized = True
 
@@ -240,6 +242,21 @@ class Flystate2PhidgetsAnalog:
             rospy.logwarn('')
             rospy.logwarn('Parameters are settable as launch-time parameters.')
             rospy.logwarn('')
+        
+        if (self.command == 'record'):
+            #distinguish begin and end of video recording by the order of voltage steps -> begin with negative, stop with positive
+            if not self.isRecording:
+                voltageSeries= [-3.14.,3.14,-3.14,3.14]
+                self.isRecording = True
+            else:
+                voltageSeries= [3.14.,-3.14,3.14,-3.14]
+                self.isRecording = False
+            for v in voltageSeries:
+                try:
+                    self.analog.setVoltage(i, voltages[i])
+                except Phidgets.PhidgetException.PhidgetException:
+                    pass
+                rospy.sleep(0.005)
 
 
 
