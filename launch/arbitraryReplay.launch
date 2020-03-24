@@ -1,0 +1,14 @@
+<launch>
+	<!-- ========================================================== -->
+	<!-- Launch everything needed for Kinefly, except the           -->
+    <!-- source image streams.                                      -->
+	<!-- ========================================================== -->
+
+    <include file="$(find Kinefly)/launch/$(env RIG)/params_phidgetsanalog.launch"          ns="kinefly" />
+
+    <node name="arbitraryReplayer"        pkg="Kinefly"   type="arbitraryReplayer.py" ns="kinefly"   required="true" />
+    <node name="flystate2phidgetsanalog"  pkg="Kinefly"   type="flystate2phidgetsanalog.py" ns="kinefly" />
+
+
+
+</launch>

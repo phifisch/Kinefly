@@ -3,7 +3,6 @@ import rospy
 from std_msgs.msg import Float32, Header, String
 from Kinefly.msg import MsgFlystate, MsgState
 #from numpy import array
-import pdb
 
 flystate_priorities = ['left','right','abdomen','head','aux']
 
